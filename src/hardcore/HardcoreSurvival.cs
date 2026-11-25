@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.8";
+    public const string Version = "2.7.0";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1157,7 +1157,7 @@ namespace BCUI_HC
             }
         }
 
-        // a white air bar right above health (a stripped copy of the health row); replaces the game's radial
+        // a white air bar right above health (a stripped copy of the health row, bubbles for its icon); replaces the game's radial
         static GameObject air;
         static Slider[] airSl = new Slider[0];
         static CanvasGroup radialCg;
@@ -1181,8 +1181,9 @@ namespace BCUI_HC
                 LayoutElement le = air.GetComponent<LayoutElement>();
                 if (le == null) le = air.AddComponent<LayoutElement>();
                 le.ignoreLayout = true;
+                // the heart becomes a cluster of bubbles, drawn in the same white as the bar
                 foreach (Image im in air.GetComponentsInChildren<Image>(true))
-                    if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) im.enabled = false;
+                    if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) { im.sprite = Bubbles(); im.color = Color.white; im.preserveAspect = true; im.enabled = true; }
                 airSl = air.GetComponentsInChildren<Slider>(true);
                 foreach (Slider s in airSl)
                 {
@@ -1198,6 +1199,39 @@ namespace BCUI_HC
             foreach (Slider s in airSl) if (s != null) s.value = v;
             RectTransform rt = (RectTransform)air.transform;
             rt.anchoredPosition += Delta(rt, par, true, x, y);
+        }
+
+        // three bubbles (big, medium, small): a white rim, a faint fill and a glint top-left
+        static Sprite bubbles;
+        static Sprite Bubbles()
+        {
+            if (bubbles != null) return bubbles;
+            const int n = 64;
+            Texture2D t = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            t.wrapMode = TextureWrapMode.Clamp; t.filterMode = FilterMode.Bilinear;
+            Vector3[] b = { new Vector3(26f, 24f, 18f), new Vector3(47f, 46f, 11f), new Vector3(20f, 52f, 7f) };
+            Color32[] px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float a = 0f;
+                    for (int i = 0; i < b.Length; i++)
+                    {
+                        float r = b[i].z, w = Mathf.Max(2.4f, r * 0.2f);
+                        float dx = x + 0.5f - b[i].x, dy = y + 0.5f - b[i].y;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy);
+                        float rim = Mathf.Clamp01(w * 0.5f + 0.5f - Mathf.Abs(d - (r - w * 0.5f)));
+                        float fill = Mathf.Clamp01(r - d + 0.5f) * 0.22f;
+                        float gx = x + 0.5f - (b[i].x - r * 0.4f), gy = y + 0.5f - (b[i].y + r * 0.4f), gr = r * 0.24f;
+                        float glint = Mathf.Clamp01(gr - Mathf.Sqrt(gx * gx + gy * gy) + 0.5f) * 0.95f;
+                        a = Mathf.Max(a, Mathf.Max(rim, Mathf.Max(fill, glint)));
+                    }
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
+                }
+            t.SetPixels32(px); t.Apply(false, true);
+            bubbles = Sprite.Create(t, new Rect(0f, 0f, n, n), new Vector2(0.5f, 0.5f), 100f);
+            bubbles.name = "BC_HC_Bubbles";
+            return bubbles;
         }
 
         static void Gear(PlayerInventory inv, RectTransform par, float x, float y)
@@ -1707,6 +1741,15 @@ namespace BCUI_HC
             Color vc = off ? Kit.A(Kit.Brown, 0.45f) : (st >= 1 ? Color.Lerp(Kit.Brown, Kit.Bad, 0.6f + 0.4f * Mathf.Sin(t * (st >= 2 ? 6f : 3f))) : Kit.Brown);
             val[i].color = vc;
             float sc = st >= 2 && !off ? 1f + 0.06f * Mathf.Abs(Mathf.Sin(t * 3f)) : 1f;
+            if (i == 1)
+            {
+                // heat row: no effects at all (no flash, no pulsing colour, no throbbing text)
+                rf = 0f; sc = 1f;
+                rowFlash[i].color = Kit.A(Kit.Bad, 0f);
+                fillImg[i].color = c;
+                vc = off ? Kit.A(Kit.Brown, 0.45f) : (st >= 1 ? Color.Lerp(Kit.Brown, Kit.Bad, 0.7f) : Kit.Brown);
+                val[i].color = vc;
+            }
             val[i].rectTransform.localScale = new Vector3(sc, sc, 1f);
             // energy bar: a sleepy night blue (pale when rested, deeper as you tire)
             Color fc = i == 0 ? Color.Lerp(new Color32(0x6E, 0x8F, 0xC9, 255), new Color32(0x3A, 0x4E, 0x8C, 255), 1f - shown[i]) : fillImg[i].color;
@@ -1722,12 +1765,11 @@ namespace BCUI_HC
             Row(0, energy, Color.Lerp(Kit.Bad, Kit.Good, Mathf.Clamp01(energy * 1.8f)),
                 fatigue >= 1f ? "Exausto" : (fatigue > 0f ? "Cansado" : "Bem"), fatigue >= 1f ? 2 : (fatigue > 0f ? 1 : 0), !HardcoreSurvival.SleepOn);
 
-            Color coldC = new Color(0.36f, 0.62f, 0.86f), warmC = new Color(0.9f, 0.56f, 0.2f);
             string tx = temp < 0.1f ? "Gelado" : (temp < 0.35f ? "Frio" : (temp > 0.85f ? "Quente" : "Normal"));
             if (HardcoreSurvival.wet > 0.3f && temp >= 0.1f) tx = "Molhado";
             if (fire && temp < 0.99f) tx = HardcoreSurvival.wet > 0.05f ? "A secar" : "A aquecer";
-            Color tc = Color.Lerp(coldC, warmC, temp);
-            if (fire) tc = Color.Lerp(tc, new Color(1f, 0.75f, 0.3f), 0.35f + 0.35f * Mathf.Sin(t * 5f));
+            // the heat bar keeps one steady colour: no pulsing, no shifting with the temperature
+            Color tc = new Color(0.9f, 0.56f, 0.2f);
             Row(1, temp, tc, tx, temp < 0.1f ? 2 : (temp < 0.35f ? 1 : 0), !HardcoreSurvival.TempOn);
 
             bool sick = sickLeft > 0f;
