@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.5";
+    public const string Version = "2.4.6";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -883,12 +883,23 @@ public class HardcoreSurvival : Mod
         friendStats.TryGetValue(id, out fs);
         friendAt.TryGetValue(id, out at);
         if (fs != null && now - at > 6f) fs = null;
+        bool vanilla = false;
+        if (fs == null)
+        {
+            // friend without this mod (or an old one): the base game still syncs health/hunger/thirst
+            try
+            {
+                PlayerStats ps = looked.Stats;
+                if (ps != null) { fs = new float[] { K(ps.stat_health), K(ps.stat_hunger.Normal), K(ps.stat_thirst.Normal), -1f, -1f, -1f, 0f, 0f }; vanilla = true; }
+            }
+            catch { }
+        }
         string name = null;
         try { if (looked.characterSettings != null) name = looked.characterSettings.Name; } catch { }
         if (string.IsNullOrEmpty(name)) name = "Amigo";
         bool deadF = false;
         try { deadF = looked.PlayerScript != null && looked.PlayerScript.IsDead; } catch { }
-        BCUI_HC.FriendCard.Get().Set(looked, name, fs, deadF);
+        BCUI_HC.FriendCard.Get().Set(looked, name, fs, deadF, vanilla);
     }
 
     public static Vector3 HeadPos(Network_Player p)
@@ -1617,12 +1628,13 @@ namespace BCUI_HC
             }
         }
 
-        public void Set(Network_Player p, string name, float[] v, bool dead)
+        public void Set(Network_Player p, string name, float[] v, bool dead, bool vanilla)
         {
             target = p;
             title.text = name;
             if (dead) sub.text = "Inconsciente";
-            else if (v == null) sub.text = "Sem dados do mod";
+            else if (v == null) sub.text = "Sem dados";
+            else if (vanilla) sub.text = "Sem o Hardcore Survival";
             else
             {
                 string s = v[6] > 0.3f ? "Molhado" : "Seco";
