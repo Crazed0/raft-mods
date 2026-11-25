@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.2";
+    public const string Version = "1.6.3";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -687,7 +687,8 @@ public class LeatherUI : Mod
         // under it the inventory (with any storage or research table beside it), as it is really drawn
         float rx0 = cx + PadIn, rx1 = cx + w * 0.5f - PadOut, pw = rx1 - rx0;
         bool any = false;
-        Rect inv = new Rect();
+        Rect inv = new Rect(), store = new Rect();
+        storeOpen = false;
         string parts = "";
         foreach (Transform c in invParentT)
         {
@@ -697,6 +698,15 @@ public class LeatherUI : Mod
             Rect hr = Home(rt, rt);
             if (hr.width < 1f || hr.height < 1f) continue;
             Rect v;
+            if (rt.gameObject.activeInHierarchy && rt.name.Contains("Storage"))
+            {
+                // a chest goes on the left page by itself (crafting is put away while it is open)
+                if (invVis.TryGetValue(rt, out v)) hr = Part(hr, rt.rect, v);
+                parts += " " + rt.name + R(hr);
+                store = storeOpen ? Union(store, hr) : hr;
+                storeOpen = true;
+                continue;
+            }
             if (invVis.TryGetValue(rt, out v)) hr = Part(hr, rt.rect, v);
             // a panel that draws nothing (an empty holder) takes no room; its bare rect used to push the
             // inventory ~95 units off the foot of the page
@@ -721,8 +731,18 @@ public class LeatherUI : Mod
         sx = lo <= hi ? Mathf.Clamp(sx, lo, hi) : lo;
         // too tall for the page: its top stays under the header
         if (inv.yMax + sy > content) sy = content - inv.yMax;
+        if (storeOpen)
+        {
+            // chest open: the inventory centred on the right page, the chest centred on the left one
+            sx = (rx0 + rx1) * 0.5f - inv.center.x;
+            float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
+            float tx = (lx0 + lx1) * 0.5f - store.center.x;
+            float tlo = cx - w * 0.5f + 16f - store.xMin, thi = cx - 16f - store.xMax;
+            tx = tlo <= thi ? Mathf.Clamp(tx, tlo, thi) : thi;
+            storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(content - store.yMax));
+        }
         invShift = new Vector2(Mathf.Round(sx), Mathf.Round(sy));
-        if (cardOn)
+        if (cardOn && !storeOpen)
         {
             float cx0 = rx0, cx1 = inv.xMin + sx - 24f;
             Rect cv = cardVisHas ? cardVis : cardT.rect;
@@ -1201,6 +1221,7 @@ public class LeatherUI : Mod
         float now = Time.unscaledTime;
         if (now >= nextScan) { nextScan = now + 0.5f; Scan(); MeasureInv(); }
         Layout();
+        HideCrafting(storeOpen);
 
         // the game may move, recolour or retint any of these itself: whatever it sets becomes the new original
         foreach (KeyValuePair<RectTransform, Held<Vector2>> kv in moved)
@@ -1209,7 +1230,7 @@ public class LeatherUI : Mod
             if (rt == null || rt.parent == null) continue;
             Vector2 cur = rt.anchoredPosition;
             if (!h.has || cur != h.set) { h.orig = cur; h.has = true; }
-            Vector3 d = rt.parent.InverseTransformVector(bookRoot.TransformVector(rt == craftingT ? craftShift : invShift));
+            Vector3 d = rt.parent.InverseTransformVector(bookRoot.TransformVector(rt == craftingT ? craftShift : (storeOpen && rt.name.Contains("Storage") ? storeShift : invShift)));
             Vector2 want = h.orig + new Vector2(Mathf.Round(d.x), Mathf.Round(d.y));
             h.set = want;
             if (cur != want) rt.anchoredPosition = want;
@@ -1241,8 +1262,26 @@ public class LeatherUI : Mod
         }
     }
 
+    // while a chest is open the crafting column, recipe list and card are put away: every item the
+    // player owns already counts for crafting, so there is nothing to craft from the chest
+    bool storeOpen;
+    Vector2 storeShift;
+    CanvasGroup craftCG;
+    bool craftHid;
+    void HideCrafting(bool hide)
+    {
+        if (craftingT == null) { craftHid = false; return; }
+        if (hide == craftHid && (!hide || (craftCG != null && craftCG.alpha == 0f))) return;
+        if (craftCG == null) { craftCG = craftingT.GetComponent<CanvasGroup>(); if (craftCG == null) craftCG = craftingT.gameObject.AddComponent<CanvasGroup>(); }
+        craftCG.alpha = hide ? 0f : 1f;
+        craftCG.interactable = !hide;
+        craftCG.blocksRaycasts = !hide;
+        craftHid = hide;
+    }
+
     void Restore()
     {
+        HideCrafting(false);
         if (cardHas && cardT != null)
         {
             if (cardT.anchoredPosition == cardPosSet) cardT.anchoredPosition = cardPosOrig;
