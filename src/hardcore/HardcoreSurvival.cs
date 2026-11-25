@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.3";
+    public const string Version = "2.6.4";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1107,6 +1107,8 @@ namespace BCUI_HC
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
+                Tint(hunger, new Color32(0x9C, 0x5B, 0x34, 255));
+                Tint(thirst, new Color32(0x3B, 0x8E, 0xD4, 255));
                 // sleep, heat and sickness sit in the screen's bottom-left corner, stacked up from the very bottom
                 Canvas cv = par.GetComponentInParent<Canvas>();
                 RectTransform root = cv != null ? cv.rootCanvas.transform as RectTransform : null;
@@ -1122,13 +1124,34 @@ namespace BCUI_HC
                         yc += Box(r, par).height + 6f;
                     }
                 }
-                Gear(inv, par, hb.xMin, yl);
+                // the gear sits to the right of the sleep bar
+                RectTransform sleep = nat.Row(0);
+                if (sleep != null && sleep.gameObject.activeInHierarchy)
+                {
+                    Rect sb = Box(sleep, par);
+                    Gear(inv, par, sb.xMax + 14f, Mathf.Round(sb.center.y - 19f));
+                }
+                else Gear(inv, par, hb.xMin, yl);
 
                 // right half: hunger, thirst, then the mod rows, all ending at the hotbar right edge
                 float yr = Place(hunger, par, false, hb.xMax, y0);
                 yr = Place(thirst, par, false, hb.xMax, yr);
             }
             catch (System.Exception e) { Debug.LogWarning("[HardcoreSurvival] hud minecraft: " + e.Message); nextFind = 0f; }
+        }
+
+        // the bar fill colour of a native row (both sliders: value and target)
+        static void Tint(RectTransform row, Color c)
+        {
+            if (row == null) return;
+            foreach (Slider s in row.GetComponentsInChildren<Slider>(true))
+            {
+                if (s.fillRect == null) continue;
+                Image im = s.fillRect.GetComponent<Image>();
+                if (im == null) continue;
+                Color k = c; k.a = im.color.a;
+                if (im.color != k) im.color = k;
+            }
         }
 
         static void Gear(PlayerInventory inv, RectTransform par, float x, float y)
@@ -1449,6 +1472,7 @@ namespace BCUI_HC
         public void SetRow(int i, float k, Color c, string text, Color tc, float flash, float scale)
         {
             if (rows[i] == null) return;
+            if (i == 1) flash = 0f; // the heat bar never flashes
             if (sl[i] != null) foreach (Slider s in sl[i]) if (s != null) s.value = k;
             Color fc = Color.Lerp(c, Color.white, flash * 0.5f); fc.a = 1f;
             if (fills[i] != null) foreach (Image f in fills[i]) if (f != null) f.color = fc;
