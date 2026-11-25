@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.6";
+    public const string Version = "2.4.7";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -835,6 +835,7 @@ public class HardcoreSurvival : Mod
     float sendAt, scanAt, socialErrAt, lookUntil;
     Network_Player[] others = new Network_Player[0];
     Network_Player looked;
+    static readonly System.Collections.Generic.HashSet<ulong> noData = new System.Collections.Generic.HashSet<ulong>();
 
     static float K(Stat s) { return s == null || s.Max <= 0f ? 0f : Mathf.Clamp01(s.Value / s.Max); }
 
@@ -890,6 +891,7 @@ public class HardcoreSurvival : Mod
             try
             {
                 PlayerStats ps = looked.Stats;
+                if (!noData.Contains(id)) { noData.Add(id); Debug.Log("[HardcoreSurvival] amigo " + id + " sem dados do mod (precisa do Hardcore Survival 2.4.5+); recebidos de: " + string.Join(",", System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(friendStats.Keys, k => k.ToString())))); }
                 if (ps != null) { fs = new float[] { K(ps.stat_health), K(ps.stat_hunger.Normal), K(ps.stat_thirst.Normal), -1f, -1f, -1f, 0f, 0f }; vanilla = true; }
             }
             catch { }
@@ -917,6 +919,7 @@ public class HardcoreSurvival : Mod
         float[] v = new float[8];
         for (int i = 0; i < v.Length && i + 1 < parts.Length; i++)
             float.TryParse(parts[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out v[i]);
+        if (!friendStats.ContainsKey(from.Id)) Debug.Log("[HardcoreSurvival] dados recebidos do amigo " + from.Id);
         friendStats[from.Id] = v;
         friendAt[from.Id] = Time.unscaledTime;
         return true;
