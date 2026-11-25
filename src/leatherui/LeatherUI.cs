@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.4";
+    public const string Version = "1.6.5";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -1216,9 +1216,20 @@ public class LeatherUI : Mod
 
     // the brown box behind a chest's slots: an image on the storage panel itself, or one of its direct
     // children that covers most of it (the slots, icon and buttons are much smaller)
+    bool InStorage(Transform t)
+    {
+        for (Transform u = t; u != null; u = u.parent)
+            if (u.parent == invParentT) return u.name.Contains("Storage");
+        return false;
+    }
+
     bool ChestBox(Image img)
     {
         Transform t = img.transform;
+        // the chest's brown box and its drop shadow, by name
+        if ((t.name == "BrownBackground" || t.name == "DarkShadow") && t.GetComponentInParent<Canvas>() != null)
+            for (Transform u = t.parent; u != null; u = u.parent)
+                if (u.parent == invParentT) return u.name.Contains("Storage");
         RectTransform panel = null;
         if (t.parent == invParentT) panel = t as RectTransform;
         else if (t.parent != null && t.parent.parent == invParentT) panel = t.parent as RectTransform;
@@ -1275,6 +1286,8 @@ public class LeatherUI : Mod
             if (k.has && cur == k.set) continue;
             k.orig = cur; k.has = true;
             k.set = Inkify(cur);
+            // the chest's name is drawn faint by the game (it is an editable field): full ink on the paper
+            if (InStorage(t.transform)) k.set = new Color(InkCol.r, InkCol.g, InkCol.b, 1f);
             t.color = k.set;
             if (k.set != k.orig && k.shadows != null)
                 foreach (Shadow s in k.shadows)
