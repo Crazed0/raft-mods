@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.4";
+    public const string Version = "2.5.5";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -538,13 +538,8 @@ public class HardcoreSurvival : Mod
             if (now >= insulAt) { insulAt = now + 1f; insul = Insulation(me); }
             UniqueWeatherType wt = Weather();
             bool wetWeather = wt == UniqueWeatherType.Rain || wt == UniqueWeatherType.Snow || wt == UniqueWeatherType.SnowRough;
-            // wet clothes: soaked in the sea, damp in rain/snow, dry slowly (fast next to a fire)
-            if (inWater) wet = 1f;
-            else if (wetWeather && !nearFire && wet < 0.45f) wet = Mathf.MoveTowards(wet, 0.45f, dt / 60f);
-            else wet = Mathf.MoveTowards(wet, 0f, (nearFire ? 1f / 15f : 1f / 300f) * dt);
-            if (leftWater && (IsNight(h) || wetWeather || temp < 0.55f)) { msgAt = 0f; Msg("ESTÁS ENCHARCADO", "A roupa molhada gela-te. Seca-te junto a algo quente.", true); }
-            if (wet > 0.3f) wetShown = true;
-            if (wetShown && wet <= 0.02f) { wetShown = false; Msg("JÁ ESTÁS SECO", "A roupa secou.", false); }
+            // no wet clothes at all (removed on request): the sea only cools while you are in it
+            wet = 0f; wetShown = false;
             float target = IsNight(h) ? 0.45f : 0.75f;
             switch (wt)
             {

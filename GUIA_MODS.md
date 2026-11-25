@@ -41,7 +41,7 @@ raft-mods/
 | `src/bigpalms` | BreakableBigPalms.cs | 1.0.2 | Palmeiras grandes partem-se |
 | `src/treefix` | TreeHarvestFix.cs | 1.0.0 | Correção na apanha das árvores |
 | `src/shark` | Shark_Attack_Delayed.cs | 1.2.2 | Tubarão ataca mais tarde |
-| `src/hardcore` | HardcoreSurvival.cs | 2.5.4 | Calor só junto a fontes a 3 m (grelhas, filtros, fundições, lanterna, cesto de fogo, lareira, banheira; lanternas/fogos aquecem sempre); molhado tem de secar primeiro; roupa de couro isola bem (também na água); água arrefece devagar. Sono só nos últimos 20% da barra de energia (57.6 h acordado de 72). Intoxicação por comer cru. SEM febre (removida, sem filtros nem marcador). Barra de calor com marcador a 35% (frio). Cartão do amigo: dados por rede (slug hardcore-survival, envio fiável) ou vida/fome/sede do jogo |
+| `src/hardcore` | HardcoreSurvival.cs | 2.5.5 | Sem estado molhado/encharcado (desde 2.5.5 wet fica sempre 0: a água só arrefece enquanto estás nela). Calor só junto a fontes a 3 m (grelhas, filtros, fundições, lanterna, cesto de fogo, lareira, banheira; lanternas/fogos aquecem sempre); molhado tem de secar primeiro; roupa de couro isola bem (também na água); água arrefece devagar. Sono só nos últimos 20% da barra de energia (57.6 h acordado de 72). Intoxicação por comer cru. SEM febre (removida, sem filtros nem marcador). Barra de calor com marcador a 35% (frio). Cartão do amigo: dados por rede (slug hardcore-survival, envio fiável) ou vida/fome/sede do jogo |
 | `src/modsync` | ModSync.cs | 2.1.4 | Atualiza os mods de todos a partir do site |
 
 ## 3. Fluxo de trabalho
