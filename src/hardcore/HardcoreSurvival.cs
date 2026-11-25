@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.2";
+    public const string Version = "2.6.3";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1107,13 +1107,20 @@ namespace BCUI_HC
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
-                // only sickness goes above health; sleep and heat stay in the bottom-left corner where they were created
-                for (int i = 2; i >= 2; i--)
+                // sleep, heat and sickness sit in the screen's bottom-left corner, stacked up from the very bottom
+                Canvas cv = par.GetComponentInParent<Canvas>();
+                RectTransform root = cv != null ? cv.rootCanvas.transform as RectTransform : null;
+                if (root != null)
                 {
-                    RectTransform r = nat.Row(i);
-                    if (r == null || !r.gameObject.activeInHierarchy) continue;
-                    nat.MoveBy(i, Delta(r, par, true, hb.xMin, yl));
-                    yl += Box(r, par).height + 6f;
+                    Rect scr = Bounds(root, par);
+                    float yc = scr.yMin + 16f;
+                    for (int i = 0; i <= 2; i++)
+                    {
+                        RectTransform r = nat.Row(i);
+                        if (r == null || !r.gameObject.activeInHierarchy) continue;
+                        nat.MoveBy(i, Delta(r, par, true, scr.xMin + 16f, yc));
+                        yc += Box(r, par).height + 6f;
+                    }
                 }
                 Gear(inv, par, hb.xMin, yl);
 
