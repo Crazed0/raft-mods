@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.4";
+    public const string Version = "2.4.5";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -364,6 +364,8 @@ public class HardcoreSurvival : Mod
         try { me = RAPI.GetLocalPlayer(); } catch { }
         string w = null;
         try { w = SaveAndLoad.CurrentGameFileName; } catch { }
+        // a client in a friend's world has no save name of its own
+        if (me != null && string.IsNullOrEmpty(w)) w = "_cliente";
         if (me == null || string.IsNullOrEmpty(w))
         {
             if (world != null) { Save(); RestoreSpeed(); ClearFx(); world = null; }

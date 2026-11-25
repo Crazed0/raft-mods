@@ -13,7 +13,7 @@ using RaftModLoader;
 // (growth of each plant) and any tank or battery. It shows by itself in the top left while you look at one.
 public class Inspect : Mod
 {
-    public const string Version = "1.2.0";
+    public const string Version = "1.2.1";
     static bool open;
     static float next;
     static Block shown;
@@ -100,7 +100,8 @@ public class Inspect : Mod
             bool on = false;
             try { on = cs.IsUsingEnergySource(); } catch { }
             rows.Add(new Row(on ? "A trabalhar" : "Parado", -1f, on));
-            if (cs.fuel != null)
+            // some stands (the advanced purifier) carry a dummy fuel object: MaxFuel -1, count int.MaxValue
+            if (cs.fuel != null && cs.fuel.MaxFuel > 0 && cs.fuel.GetFuelCount() >= 0 && cs.fuel.GetFuelCount() <= cs.fuel.MaxFuel)
             {
                 int f = cs.fuel.GetFuelCount(), mx = cs.fuel.MaxFuel;
                 string burn = cs.fuel.IsBurning() ? " (arde mais " + Time2(cs.fuel.GetBurnSecondsLeft()) + ")" : "";
