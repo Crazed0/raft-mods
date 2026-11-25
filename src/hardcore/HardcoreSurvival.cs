@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.0";
+    public const string Version = "2.6.1";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1107,18 +1107,18 @@ namespace BCUI_HC
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
+                for (int i = 2; i >= 0; i--)
+                {
+                    RectTransform r = nat.Row(i);
+                    if (r == null || !r.gameObject.activeInHierarchy) continue;
+                    nat.MoveBy(i, Delta(r, par, true, hb.xMin, yl));
+                    yl += Box(r, par).height + 6f;
+                }
                 Gear(inv, par, hb.xMin, yl);
 
                 // right half: hunger, thirst, then the mod rows, all ending at the hotbar right edge
                 float yr = Place(hunger, par, false, hb.xMax, y0);
                 yr = Place(thirst, par, false, hb.xMax, yr);
-                for (int i = 2; i >= 0; i--)
-                {
-                    RectTransform r = nat.Row(i);
-                    if (r == null || !r.gameObject.activeInHierarchy) continue;
-                    nat.MoveBy(i, Delta(r, par, false, hb.xMax, yr));
-                    yr += Box(r, par).height + 6f;
-                }
             }
             catch (System.Exception e) { Debug.LogWarning("[HardcoreSurvival] hud minecraft: " + e.Message); nextFind = 0f; }
         }
