@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.7";
+    public const string Version = "2.6.8";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -49,7 +49,7 @@ public class HardcoreSurvival : Mod
     float baseN, baseS, baseW;
 
     float flutterAt;
-    float nextVomit, nextGrowl, nextBreath, nextShiver, nextFreezeHurt, nextBlink, blinkStart, blinkLen, blinkDepth;
+    float nextVomit, nextGrowl, nextBreath, nextShock, nextFreezeHurt, nextBlink, blinkStart, blinkLen, blinkDepth;
     Quaternion lastOff = Quaternion.identity, lastRes = Quaternion.identity; bool rollOn;
     bool micro, wokeUp, wasInWater;
     float sleepLid;
@@ -237,6 +237,17 @@ public class HardcoreSurvival : Mod
     }
 
     static bool IsNight(float h) { return h >= 0f && (h >= 20f || h < 5f); }
+
+    // how much the sun warms you right now (0..1): none at night or under rain/snow, softer at dawn,
+    // dusk and in fog
+    static float Sun(float h, UniqueWeatherType wt)
+    {
+        if (h < 0f || IsNight(h)) return 0f;
+        if (wt == UniqueWeatherType.Rain || wt == UniqueWeatherType.Snow || wt == UniqueWeatherType.SnowRough) return 0f;
+        float s = Mathf.Min(Mathf.Clamp01((h - 5f) / 2f), Mathf.Clamp01((20f - h) / 2f));
+        if (wt == UniqueWeatherType.Fog) s *= 0.5f;
+        return s;
+    }
 
     WeatherManager wm;
     UniqueWeatherType Weather()
@@ -524,9 +535,11 @@ public class HardcoreSurvival : Mod
         if (TempOn && !dead)
         {
             if (now >= fireAt) { fireAt = now + 2f; nearFire = FireNear(me.transform.position); }
-            bool inWater = (me.PersonController != null && me.PersonController.controllerType == ControllerType.Water) || me.transform.position.y < -0.4f;
-            if (inWater && !wasInWater)
+            // only really swimming counts: wading in the shallows of an island beach does not
+            bool inWater = (me.PersonController != null && me.PersonController.controllerType == ControllerType.Water) || me.transform.position.y < -1.3f;
+            if (inWater && !wasInWater && now >= nextShock)
             {
+                nextShock = now + 20f;
                 // cold shock when you jump in
                 Emit(st, "eventEmitter_LowBreath");
                 temp = Mathf.Max(0f, temp - 0.02f);
@@ -561,6 +574,10 @@ public class HardcoreSurvival : Mod
                 // without one the body only warms itself once dry: barely without leather clothes,
                 // slowly with them
                 rate = wet > 0.05f ? 0f : (insul >= 0.15f ? Mathf.Lerp(1f / 400f, 1f / 150f, insul / 0.8f) : 1f / 2400f);
+                // out in the sun during the day the body warms up bit by bit, never as fast or as
+                // high as next to a real heat source
+                float sun = Sun(h, wt);
+                if (sun > 0f) rate = Mathf.Max(rate, sun / 110f);
             }
             // in the water the temperature can only go down
             if (inWater) target = Mathf.Min(target, temp);
@@ -586,7 +603,7 @@ public class HardcoreSurvival : Mod
                 if (now >= nextFreezeHurt) { nextFreezeHurt = now + UnityEngine.Random.Range(6f, 10f); Emit(st, "eventEmitter_Damaged"); HurtFx = 1f; BadEvent++; }
             }
             heatT = 0f; feverLeft = 0f; hotStage = 0;
-            if (cold > 0.4f && now >= nextShiver) { nextShiver = now + UnityEngine.Random.Range(12f, 20f); Emit(st, "eventEmitter_LowBreath"); }
+            // shivering is shown on screen only: the breath sound is the game's drowning cue
             int cs = freezing ? 2 : (cold > 0f ? 1 : 0);
             if (cs > coldStage)
             {

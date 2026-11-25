@@ -30,7 +30,7 @@ using RaftModLoader;
 // Console (F10): drift <m/s>|off  drift.max <n>  drift.log on|off  drift.status  waves <0-100>
 public class CalmFishing : Mod
 {
-    public const string Version = "1.7.1";
+    public const string Version = "1.7.2";
     public const string HarmonyId = "com.bestcode.calmfishing";
     const string PrefDrift = "CalmFishing.Drift";
     const string PrefCalm = "CalmFishing.Calm";
@@ -156,15 +156,29 @@ public class CalmFishing : Mod
         return n;
     }
 
+    // Land under this spot? Looks past floating items, players, animals and the raft (before, an
+    // item over the spot - even the item itself - hid the island under it, so items slid through
+    // the island), and the shallow sand around an island beach counts as land too, so items stop
+    // in the shallows instead of drifting over the submerged beach and into the sand.
+    public const float ShallowDepth = -1.2f;
     public static bool IsOverLand(Vector3 pos, Raft raft)
     {
-        RaycastHit hit;
         var from = new Vector3(pos.x, 80f, pos.z);
-        if (!Physics.Raycast(from, Vector3.down, out hit, 90f, ~0, QueryTriggerInteraction.Ignore)) return false;
-        if (hit.point.y <= 0.3f) return false;
-        if (raft != null && hit.transform.IsChildOf(raft.transform)) return false;
-        if (hit.transform.GetComponentInParent<PickupItem_Networked>() != null) return false;
-        return true;
+        RaycastHit[] hits = Physics.RaycastAll(from, Vector3.down, 92f, ~0, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hits.Length; i++)
+        {
+            RaycastHit hit = hits[i];
+            Transform ht = hit.transform;
+            if (ht == null) continue;
+            if (raft != null && ht.IsChildOf(raft.transform)) continue;
+            if (ht.GetComponentInParent<PickupItem_Networked>() != null) continue;
+            if (ht.GetComponentInParent<Network_Player>() != null) continue;
+            Rigidbody rb = hit.collider != null ? hit.collider.attachedRigidbody : null;
+            if (rb != null && !rb.isKinematic) continue; // sharks, fish, loose objects
+            if (hit.point.y > 0.3f) return true;
+            if (hit.point.y > ShallowDepth && ht.GetComponentInParent<Landmark>() != null) return true;
+        }
+        return false;
     }
 
     public static int spawnedWhileDrifting, blockedByLand, blockedByLimit, caughtByNet;

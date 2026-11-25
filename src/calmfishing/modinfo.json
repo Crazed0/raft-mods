@@ -2,7 +2,7 @@
   "name": "Calm Fishing",
   "author": "BestCode",
   "description": "While anchored, floating items keep coming on a natural sea current that carries them past the raft (at an island they wash up on its coast), with an item limit (anti-lag). Calmer waves. Fish schools now and then: fish bite faster in them and sometimes a second one comes up, with seagulls circling over them. Storms bring more floating items. Logs weather, waves and items. Console: drift, drift.max, drift.log, drift.status, drift.criativo, cardume, drift.storm, waves.",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "license": "MIT",
   "icon": "",
   "banner": "",
