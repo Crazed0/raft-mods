@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.7";
+    public const string Version = "2.4.8";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -530,7 +530,7 @@ public class HardcoreSurvival : Mod
             {
                 // cold shock when you jump in
                 Emit(st, "eventEmitter_LowBreath");
-                temp = Mathf.Max(0f, temp - 0.06f);
+                temp = Mathf.Max(0f, temp - 0.02f);
                 HurtFx = Mathf.Max(HurtFx, 0.5f);
                 if (temp < 0.6f) Msg("A ÁGUA ESTÁ GELADA", "Sai da água ou vais arrefecer depressa.", true);
             }
@@ -557,7 +557,7 @@ public class HardcoreSurvival : Mod
             }
             if (inWater) target -= 0.65f;
             else target -= 0.2f * wet;
-            float rate = inWater ? 1f / 22f : 1f / 90f;
+            float rate = inWater ? 1f / 66f : 1f / 90f;
             // a fire on the raft cannot warm you while you are in the sea
             if (inWater) nearFire = false;
             // next to a heat source: warms fast, a little slower while the clothes are still wet
@@ -566,16 +566,16 @@ public class HardcoreSurvival : Mod
             {
                 // without one the body only warms itself once dry: barely without leather clothes,
                 // slowly with them
-                rate = wet > 0.05f ? 0f : (insul >= 0.15f ? Mathf.Lerp(1f / 600f, 1f / 240f, insul / 0.8f) : 1f / 2400f);
+                rate = wet > 0.05f ? 0f : (insul >= 0.15f ? Mathf.Lerp(1f / 400f, 1f / 150f, insul / 0.8f) : 1f / 2400f);
             }
             // in the water the temperature can only go down
             if (inWater) target = Mathf.Min(target, temp);
             if (!nearFire && target < temp)
             {
                 // wet clothes cool faster; leather armour lined with wool keeps the heat in (less when soaked)
-                float ins = inWater ? insul * 0.4f : insul;
+                float ins = Mathf.Min(0.92f, inWater ? insul * 0.9f : insul * 1.15f);
                 if (!inWater) rate *= 1f + 0.8f * wet;
-                rate *= 1f - ins * (1f - 0.6f * wet);
+                rate *= 1f - ins * (1f - 0.35f * wet);
             }
             temp = Mathf.MoveTowards(temp, Mathf.Clamp01(target), rate * dt);
 
