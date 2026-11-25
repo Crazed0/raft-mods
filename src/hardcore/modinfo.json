@@ -2,7 +2,7 @@
   "name": "Hardcore Survival",
   "author": "BestCode",
   "description": "Harder survival, per world: you have to sleep in a bed (staying awake slows you down and your eyes stay half shut, without draining the colours), eating raw food can make you sick (cooked food cures it) and body temperature drops at night, in storms and in the water (warm up next to something hot: a lit grill, purifier, smelter, lantern, fire basket, fireplace or the bathtub; wet clothes must dry first and without leather clothes you barely warm up). The advanced purifier only works by day. Small panel above the Skills one. Console: hardcore.",
-  "version": "2.5.5",
+  "version": "2.6.0",
   "slug": "hardcore-survival",
   "license": "MIT",
   "icon": "",

@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.6";
+    public const string Version = "1.7.0";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -1254,6 +1254,7 @@ public class LeatherUI : Mod
         if (now >= nextScan) { nextScan = now + 0.5f; Scan(); MeasureInv(); }
         Layout();
         HideCrafting(storeOpen);
+        HideItemInfo(true);
 
         // the game may move, recolour or retint any of these itself: whatever it sets becomes the new original
         foreach (KeyValuePair<RectTransform, Held<Vector2>> kv in moved)
@@ -1316,9 +1317,46 @@ public class LeatherUI : Mod
     }
     Text leftTitle, leftSub;
 
+    // the selected item's picture, name and description above the inventory are not shown in the book
+    readonly List<CanvasGroup> infoCg = new List<CanvasGroup>();
+    void HideItemInfo(bool hide)
+    {
+        if (!hide)
+        {
+            foreach (CanvasGroup cg in infoCg) if (cg != null) { cg.alpha = 1f; cg.blocksRaycasts = true; }
+            infoCg.Clear();
+            return;
+        }
+        if (infoCg.Count == 0)
+        {
+            PlayerInventory pi = null;
+            try { Network_Player me = RAPI.GetLocalPlayer(); if (me != null) pi = me.Inventory; } catch (Exception) { }
+            if (pi == null) return;
+            List<Transform> ts = new List<Transform>();
+            if (pi.itemNameText != null) ts.Add(pi.itemNameText.transform);
+            if (pi.itemDescriptionText != null) ts.Add(pi.itemDescriptionText.transform);
+            if (pi.itemImage != null)
+            {
+                Transform t = pi.itemImage.transform;
+                // the picture's frame, unless that frame also holds the name
+                Transform f = t.parent;
+                bool frame = f != null && f.name != "Inventory_Player" && (pi.itemNameText == null || !pi.itemNameText.transform.IsChildOf(f));
+                ts.Add(frame ? f : t);
+            }
+            foreach (Transform t in ts)
+            {
+                CanvasGroup cg = t.GetComponent<CanvasGroup>();
+                if (cg == null) cg = t.gameObject.AddComponent<CanvasGroup>();
+                infoCg.Add(cg);
+            }
+        }
+        foreach (CanvasGroup cg in infoCg) if (cg != null && cg.alpha != 0f) { cg.alpha = 0f; cg.blocksRaycasts = false; }
+    }
+
     void Restore()
     {
         HideCrafting(false);
+        HideItemInfo(false);
         if (cardHas && cardT != null)
         {
             if (cardT.anchoredPosition == cardPosSet) cardT.anchoredPosition = cardPosOrig;

@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.5";
+    public const string Version = "2.6.0";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -975,6 +975,211 @@ namespace BCUI_HC
     using UnityEngine.UI;
 
 // Three extra rows cloned from the game's own stat bars (thirst/hunger/health), stacked above them.
+    // Minecraft-style status right above the hotbar, split in the middle. Left half: health with the
+    // equipped gear as icons above it. Right half: hunger, thirst, energy, heat and sickness stacked up.
+    // The oxygen bar is never shown.
+    public static class MineHud
+    {
+        class Orig { public Vector2 pos; public LayoutElement le; public bool added, ign; }
+        static readonly System.Collections.Generic.Dictionary<RectTransform, Orig> touched = new System.Collections.Generic.Dictionary<RectTransform, Orig>();
+        static readonly System.Collections.Generic.List<CanvasGroup> hiddenCg = new System.Collections.Generic.List<CanvasGroup>();
+        static RectTransform health, hunger, thirst, oxygen;
+        static float nextFind;
+        static RectTransform gear;
+        static Image[] gearBg = new Image[0], gearIc = new Image[0];
+        static Sprite iconBg;
+        static readonly Vector3[] wc = new Vector3[4];
+
+        static Rect Bounds(RectTransform rt, RectTransform space)
+        {
+            rt.GetWorldCorners(wc);
+            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+            for (int i = 0; i < 4; i++)
+            {
+                Vector3 q = space.InverseTransformPoint(wc[i]);
+                x0 = Mathf.Min(x0, q.x); x1 = Mathf.Max(x1, q.x); y0 = Mathf.Min(y0, q.y); y1 = Mathf.Max(y1, q.y);
+            }
+            return Rect.MinMaxRect(x0, y0, x1, y1);
+        }
+
+        static Rect Union(Rect a, Rect b)
+        {
+            return Rect.MinMaxRect(Mathf.Min(a.xMin, b.xMin), Mathf.Min(a.yMin, b.yMin), Mathf.Max(a.xMax, b.xMax), Mathf.Max(a.yMax, b.yMax));
+        }
+
+        // what a stat row draws: its bar and its icon (the glow image is far larger)
+        static Rect Box(RectTransform row, RectTransform space)
+        {
+            bool any = false; Rect r = new Rect();
+            foreach (Transform c in row)
+            {
+                if (c.name != "SliderBG" && c.name != "StatIconBG") continue;
+                Rect b = Bounds((RectTransform)c, space);
+                r = any ? Union(r, b) : b;
+                any = true;
+            }
+            return any ? r : Bounds(row, space);
+        }
+
+        static string IconOf(RectTransform row)
+        {
+            foreach (Image im in row.GetComponentsInChildren<Image>(true))
+                if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) return im.sprite.name;
+            return "";
+        }
+
+        static void Find(RectTransform par)
+        {
+            health = hunger = thirst = oxygen = null;
+            foreach (Transform c in par)
+            {
+                if (c.name.StartsWith("BC_")) continue;
+                RectTransform rt = c as RectTransform;
+                if (rt == null) continue;
+                string ic = IconOf(rt).ToLower();
+                if (ic.Contains("oxygen") || ic.Contains("air")) oxygen = rt;
+                else if (ic.Contains("health")) health = rt;
+                else if (ic.Contains("hunger") || ic.Contains("food")) hunger = rt;
+                else if (ic.Contains("thirst") || ic.Contains("water")) thirst = rt;
+                else if (ic != "") Debug.Log("[HardcoreSurvival] hud: barra desconhecida " + c.name + " " + ic);
+                if (iconBg == null)
+                    foreach (Image im in rt.GetComponentsInChildren<Image>(true))
+                        if (im.sprite != null && im.sprite.name == "StatIconBG") { iconBg = im.sprite; break; }
+            }
+        }
+
+        static void Free(RectTransform rt)
+        {
+            if (touched.ContainsKey(rt)) return;
+            Orig o = new Orig();
+            o.pos = rt.anchoredPosition;
+            o.le = rt.GetComponent<LayoutElement>();
+            if (o.le == null) { o.le = rt.gameObject.AddComponent<LayoutElement>(); o.added = true; }
+            o.ign = o.le.ignoreLayout;
+            o.le.ignoreLayout = true;
+            touched[rt] = o;
+        }
+
+        static Vector2 Delta(RectTransform row, RectTransform par, bool fromLeft, float x, float y)
+        {
+            Rect b = Box(row, par);
+            return new Vector2(Mathf.Round(fromLeft ? x - b.xMin : x - b.xMax), Mathf.Round(y - b.yMin));
+        }
+
+        static float Place(RectTransform row, RectTransform par, bool fromLeft, float x, float y)
+        {
+            if (row == null || !row.gameObject.activeInHierarchy) return y;
+            Free(row);
+            row.anchoredPosition += Delta(row, par, fromLeft, x, y);
+            return y + Box(row, par).height + 6f;
+        }
+
+        public static void Tick(NativeRows nat)
+        {
+            try
+            {
+                RectTransform par = nat.Row(0) != null ? nat.Row(0).parent as RectTransform : null;
+                if (par == null) return;
+                float now = Time.unscaledTime;
+                if (now >= nextFind) { nextFind = now + 2f; Find(par); }
+                Network_Player me = RAPI.GetLocalPlayer();
+                PlayerInventory inv = me != null ? me.Inventory : null;
+                if (inv == null) return;
+                // the hotbar slots, in the stat rows' space
+                bool any = false; Rect hb = new Rect();
+                foreach (Slot sl in inv.allSlots)
+                {
+                    if (sl == null || sl.slotType != SlotType.Hotbar || !sl.gameObject.activeInHierarchy) continue;
+                    Rect b = Bounds((RectTransform)sl.transform, par);
+                    hb = any ? Union(hb, b) : b;
+                    any = true;
+                }
+                if (!any) return;
+                float y0 = hb.yMax + 12f;
+
+                if (oxygen != null)
+                {
+                    CanvasGroup cg = oxygen.GetComponent<CanvasGroup>();
+                    if (cg == null) cg = oxygen.gameObject.AddComponent<CanvasGroup>();
+                    if (!hiddenCg.Contains(cg)) hiddenCg.Add(cg);
+                    if (cg.alpha != 0f) cg.alpha = 0f;
+                }
+
+                // left half: health, the gear above it
+                float yl = Place(health, par, true, hb.xMin, y0);
+                Gear(inv, par, hb.xMin, yl);
+
+                // right half: hunger, thirst, then the mod rows, all ending at the hotbar right edge
+                float yr = Place(hunger, par, false, hb.xMax, y0);
+                yr = Place(thirst, par, false, hb.xMax, yr);
+                for (int i = 2; i >= 0; i--)
+                {
+                    RectTransform r = nat.Row(i);
+                    if (r == null || !r.gameObject.activeInHierarchy) continue;
+                    nat.MoveBy(i, Delta(r, par, false, hb.xMax, yr));
+                    yr += Box(r, par).height + 6f;
+                }
+            }
+            catch (System.Exception e) { Debug.LogWarning("[HardcoreSurvival] hud minecraft: " + e.Message); nextFind = 0f; }
+        }
+
+        static void Gear(PlayerInventory inv, RectTransform par, float x, float y)
+        {
+            int n = inv.equipSlots.Count;
+            if (gear == null || gear.parent != par || gearIc.Length != n)
+            {
+                if (gear != null) Object.Destroy(gear.gameObject);
+                gear = Kit.Node(par, "BC_HC_Gear");
+                gear.anchorMin = gear.anchorMax = new Vector2(0.5f, 0.5f); gear.pivot = Vector2.zero;
+                gear.sizeDelta = new Vector2(Mathf.Max(1, n) * 42f, 38f);
+                gearBg = new Image[n]; gearIc = new Image[n];
+                for (int i = 0; i < n; i++)
+                {
+                    gearBg[i] = Kit.Img(gear, "Bg" + i, iconBg, iconBg != null ? Color.white : new Color(0f, 0f, 0f, 0.35f), false);
+                    gearBg[i].raycastTarget = false;
+                    gearIc[i] = Kit.Img(gearBg[i].rectTransform, "Ic", null, Color.white, false);
+                    gearIc[i].raycastTarget = false; gearIc[i].preserveAspect = true;
+                    RectTransform ir = gearIc[i].rectTransform;
+                    ir.anchorMin = Vector2.zero; ir.anchorMax = Vector2.one; ir.offsetMin = new Vector2(5f, 5f); ir.offsetMax = new Vector2(-5f, -5f);
+                }
+            }
+            int k = 0;
+            for (int i = 0; i < n; i++)
+            {
+                Slot sl = inv.equipSlots[i];
+                Item_Base it = sl != null ? sl.GetItemBase() : null;
+                Sprite sp = it != null && it.settings_Inventory != null ? it.settings_Inventory.Sprite : null;
+                gearBg[i].gameObject.SetActive(sp != null);
+                if (sp == null) continue;
+                gearIc[i].sprite = sp;
+                RectTransform br = gearBg[i].rectTransform;
+                br.anchorMin = br.anchorMax = Vector2.zero; br.pivot = Vector2.zero;
+                br.sizeDelta = new Vector2(38f, 38f);
+                br.anchoredPosition = new Vector2(k * 42f, 0f);
+                k++;
+            }
+            gear.SetAsLastSibling();
+            // the gear holder is n*42 wide from its pivot: its bottom-left goes to (x, y)
+            Rect b = Bounds(gear, par);
+            gear.anchoredPosition += new Vector2(Mathf.Round(x - b.xMin), Mathf.Round(y - b.yMin));
+        }
+
+        public static void Restore()
+        {
+            foreach (System.Collections.Generic.KeyValuePair<RectTransform, Orig> kv in touched)
+            {
+                if (kv.Key == null) continue;
+                kv.Key.anchoredPosition = kv.Value.pos;
+                if (kv.Value.le != null) { if (kv.Value.added) Object.Destroy(kv.Value.le); else kv.Value.le.ignoreLayout = kv.Value.ign; }
+            }
+            touched.Clear();
+            foreach (CanvasGroup cg in hiddenCg) if (cg != null) cg.alpha = 1f;
+            hiddenCg.Clear();
+            if (gear != null) Object.Destroy(gear.gameObject);
+            gear = null; health = hunger = thirst = oxygen = null;
+        }
+    }
+
     public class NativeRows
     {
         GameObject[] rows = new GameObject[3];
@@ -1248,6 +1453,9 @@ namespace BCUI_HC
             }
         }
 
+        public RectTransform Row(int i) { return rows[i] != null ? (RectTransform)rows[i].transform : null; }
+        public void MoveBy(int i, Vector2 d) { if (rows[i] != null) basePos[i] = ((RectTransform)rows[i].transform).anchoredPosition + d; }
+
         public void Shake(float dx)
         {
             for (int i = 0; i < 3; i++)
@@ -1326,7 +1534,7 @@ namespace BCUI_HC
             return inst;
         }
         public static void Hide() { if (inst != null && inst.gameObject.activeSelf) inst.gameObject.SetActive(false); }
-        public static void Kill() { if (inst != null) Object.Destroy(inst.gameObject); inst = null; }
+        public static void Kill() { MineHud.Restore(); if (inst != null) Object.Destroy(inst.gameObject); inst = null; }
 
         // screen effects live on their own canvas BELOW the game HUD (hotbar, stats stay visible)
         GameObject fxGo;
@@ -1454,6 +1662,7 @@ namespace BCUI_HC
             box.anchoredPosition = boxPos + new Vector2(shake + (1f - inK) * 300f, 0f);
             if (nat == null && t >= natTry) { natTry = t + 1f; nat = NativeRows.Build(); }
             if (nat != null && !nat.Alive()) nat = null;
+            if (nat != null) MineHud.Tick(nat);
             box.gameObject.SetActive(false);
             if (nat != null) nat.Shake(shake);
 
