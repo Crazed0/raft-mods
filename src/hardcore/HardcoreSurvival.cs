@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.1";
+    public const string Version = "2.6.2";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1107,7 +1107,8 @@ namespace BCUI_HC
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
-                for (int i = 2; i >= 0; i--)
+                // only sickness goes above health; sleep and heat stay in the bottom-left corner where they were created
+                for (int i = 2; i >= 2; i--)
                 {
                     RectTransform r = nat.Row(i);
                     if (r == null || !r.gameObject.activeInHierarchy) continue;
