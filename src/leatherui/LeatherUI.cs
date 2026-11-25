@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.5";
+    public const string Version = "1.6.6";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -736,9 +736,10 @@ public class LeatherUI : Mod
         if (storeOpen)
         {
             // chest open: the inventory centred on the right page, the chest centred on the left one
-            sx = (rx0 + rx1) * 0.5f - inv.center.x;
+            // both lean on the spine, one each side of it
+            sx = cx + 70f - inv.xMin;
             float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
-            float tx = (lx0 + lx1) * 0.5f - store.center.x;
+            float tx = cx - 70f - store.xMax;
             float tlo = cx - w * 0.5f + 16f - store.xMin, thi = cx - 16f - store.xMax;
             tx = tlo <= thi ? Mathf.Clamp(tx, tlo, thi) : thi;
             // the chest's top lines up with the inventory's top
@@ -1200,8 +1201,8 @@ public class LeatherUI : Mod
             foreach (Canvas cv in r.GetComponentsInChildren<Canvas>(true))
                 if (cv.overrideSorting && cv.transform != r && !UnderHotbar(cv.transform)) { cv.overrideSorting = false; flattened.Add(cv); }
             foreach (Image img in r.GetComponentsInChildren<Image>(true))
-                if (!hidden.ContainsKey(img) && img.sprite != null && !UnderHotbar(img.transform)
-                    && (PanelSprites.Contains(img.sprite.name) || ChestBox(img)))
+                if (!hidden.ContainsKey(img) && !UnderHotbar(img.transform)
+                    && ((img.sprite != null && PanelSprites.Contains(img.sprite.name)) || ChestBox(img)))
                     hidden[img] = new Held<Color>();
             foreach (Text t in r.GetComponentsInChildren<Text>(true))
             {
@@ -1227,7 +1228,7 @@ public class LeatherUI : Mod
     {
         Transform t = img.transform;
         // the chest's brown box and its drop shadow, by name
-        if ((t.name == "BrownBackground" || t.name == "DarkShadow") && t.GetComponentInParent<Canvas>() != null)
+        if (t.name == "BrownBackground" || t.name == "DarkShadow")
             for (Transform u = t.parent; u != null; u = u.parent)
                 if (u.parent == invParentT) return u.name.Contains("Storage");
         RectTransform panel = null;
