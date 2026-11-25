@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.4";
+    public const string Version = "2.6.5";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1102,11 +1102,12 @@ namespace BCUI_HC
                     CanvasGroup cg = oxygen.GetComponent<CanvasGroup>();
                     if (cg == null) cg = oxygen.gameObject.AddComponent<CanvasGroup>();
                     if (!hiddenCg.Contains(cg)) hiddenCg.Add(cg);
-                    if (cg.alpha != 0f) cg.alpha = 0f;
+                    if (cg.alpha != 1f) cg.alpha = 1f;
                 }
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
+                yl = Place(oxygen, par, true, hb.xMin, yl);
                 Tint(hunger, new Color32(0x9C, 0x5B, 0x34, 255));
                 Tint(thirst, new Color32(0x3B, 0x8E, 0xD4, 255));
                 // sleep, heat and sickness sit in the screen's bottom-left corner, stacked up from the very bottom
