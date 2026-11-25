@@ -2,7 +2,7 @@
   "name": "Mod Sync",
   "author": "BestCode",
   "description": "Keeps the mods folder equal to the pack at bestcode.pt/raft: downloads updated mods (SHA-256 verified) and hot-reloads them in game, no restart. If a new version fails to start it puts the previous one back. Console: modsync, modsync status, modsync teste.",
-  "version": "2.1.3",
+  "version": "2.1.4",
   "license": "MIT",
   "icon": "",
   "banner": "",

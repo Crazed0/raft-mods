@@ -29,7 +29,7 @@ using HMLLibrary;
 // Console (F10): modsync | modsync status | modsync reload <f> | modsync teste [reload <f> | falha <f>]
 public class ModSync : Mod
 {
-    public const string Version = "2.1.3";
+    public const string Version = "2.1.4";
     const string Base = "https://bestcode.pt/raft/";
     const string PrefManaged = "ModSync.Managed";
     const string PrefSelf = "ModSync.SelfUpdated";
@@ -42,6 +42,7 @@ public class ModSync : Mod
     static string status = "a iniciar";
     static bool busy;
     static float checkEvery = 120f;
+    static bool logVersions = true; // first check, after updates and on the modsync command
     public static bool IsSource;
     static int compilerDirFixes;
     static float nextDirCheck;
@@ -248,14 +249,42 @@ public class ModSync : Mod
 
         string wait = waiting.Count > 0 ? " | a espera de reiniciar: " + string.Join(", ", waiting.ToArray()) : "";
         if (changed.Count + removed.Count > 0)
+        {
             yield return Apply(changed, removed, failed, true);
+            logVersions = true;
+        }
         else
         {
             status = "pack de " + man.updated + ": " + inPack.Count + " mods, tudo atualizado" + wait + (failed.Count > 0 ? " | FALHARAM: " + string.Join(", ", failed.ToArray()) : "");
             Log(status);
             if (failed.Count > 0) Notify("MOD SYNC", "Falhou atualizar " + failed.Count + (failed.Count == 1 ? " mod" : " mods") + ". Vê a consola (F10).", true, 14f);
         }
+        if (logVersions) { logVersions = false; LogVersions(man); }
         busy = false;
+    }
+
+    // One line per mod: version running in this game vs the version on the site (the reference).
+    static void LogVersions(Manifest man)
+    {
+        int diff = 0;
+        Log("versoes (instalada / site) do pack de " + man.updated + ":");
+        foreach (Entry e in man.files)
+        {
+            if (!ValidName(e.name)) continue;
+            string site = string.IsNullOrEmpty(e.version) ? "?" : e.version;
+            string inst = "nao instalado";
+            try
+            {
+                ModData md = Find(e.name);
+                if (md != null && md.jsonmodinfo != null) inst = md.jsonmodinfo.version + (IsRunning(md) ? "" : " (parado)");
+                else if (File.Exists(Path.Combine(ModsDir, e.name))) inst = "no disco, nao carregado";
+            }
+            catch { }
+            bool same = inst == site;
+            if (!same) diff++;
+            Log("  " + e.name + ": " + inst + " / " + site + (same ? "  OK" : "  DIFERENTE"));
+        }
+        Log(diff == 0 ? "versoes: tudo igual ao site" : "versoes: " + diff + " diferente(s) do site");
     }
 
     // ---------------- local folder (source PC) ----------------
@@ -807,6 +836,7 @@ public class ModSync : Mod
             return "a recarregar " + f + "...";
         }
         if (IsSource) return "PC de origem: os mods sao recarregados sozinhos quando o ficheiro muda";
+        logVersions = true;
         instance.StartCoroutine(instance.Check());
         return "a verificar atualizacoes... (escreve 'modsync status' daqui a uns segundos)";
     }
