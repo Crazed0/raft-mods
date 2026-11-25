@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.6";
+    public const string Version = "2.6.7";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -643,7 +643,7 @@ public class HardcoreSurvival : Mod
         try { Social(me); } catch (Exception e) { if (Time.time > socialErrAt) { socialErrAt = Time.time + 30f; Debug.LogWarning("[HardcoreSurvival] amigo: " + e.Message); } }
         float t = Time.time;
 
-        // camera roll: nausea sway, tired drift, cold shiver, vomit lurch
+        // camera roll: nausea sway, tired drift, vomit lurch (no shake from cold or damage)
         Camera cam = Camera.main;
         if (cam != null)
         {
@@ -659,22 +659,7 @@ public class HardcoreSurvival : Mod
             roll += SickFx * (Mathf.Sin(t * 0.9f) * 3.2f + Mathf.Sin(t * 2.3f) * 0.8f);
             float tiredSway = Mathf.Clamp01((FatFx - 0.3f) / 0.7f);
             roll += tiredSway * Mathf.Sin(t * 0.45f) * 2.4f;
-            // shivering: starts faint as you get cold and grows the colder you are. Two layers, like a real
-            // shiver: a slow uneven sway of the body plus a quicker tremor that comes in waves
-            float cold = Mathf.Clamp01(ColdFx + FreezeFx * 0.25f);
-            if (cold > 0.01f)
-            {
-                float k = cold * cold * (3f - 2f * cold);                                // smooth start
-                float wave = 0.6f + 0.4f * Mathf.PerlinNoise(t * 0.45f, 9f);              // shivers come in waves
-                float sway = k * wave, trem = k * k * wave;
-                roll += sway * (Mathf.PerlinNoise(t * 1.3f, 0.3f) - 0.5f) * 1.6f;
-                pitch += sway * (Mathf.PerlinNoise(t * 1.1f, 4.4f) - 0.5f) * 1.0f;
-                roll += trem * (Mathf.PerlinNoise(t * 11f, 1.7f) - 0.5f) * 2.0f;
-                pitch += trem * (Mathf.PerlinNoise(t * 13f, 5.3f) - 0.5f) * 1.5f;
-                yaw += trem * (Mathf.PerlinNoise(t * 9f, 8.1f) - 0.5f) * 1.0f;
-            }
             roll += VomitFx * Mathf.Sin(VomitFx * 9f) * 6f * VomitFx;
-            roll += HurtFx * (Mathf.PerlinNoise(t * 25f, 7f) - 0.5f) * 3f;
             if (Mathf.Abs(roll) > 0.001f || Mathf.Abs(pitch) > 0.001f || Mathf.Abs(yaw) > 0.001f)
             {
                 lastOff = Quaternion.Euler(pitch, yaw, roll);
@@ -1592,8 +1577,7 @@ namespace BCUI_HC
         float[] shown = { 1f, 1f, 1f };
         int[] state = new int[3];
         float[] rowFlashAt = { -9f, -9f, -9f };
-        int seenBad;
-        float shakeAt = -9f, bornAt;
+        float bornAt;
         Vector2 boxPos;
 
         public static HcHud Get()
@@ -1733,10 +1717,8 @@ namespace BCUI_HC
             Row(2, sick ? 1f - sickLeft / 200f : 1f, sick ? Kit.Bad : Kit.Good,
                 sick ? (sickLeft > 100f ? "Intoxicado" : "Enjoado") : "Bem", sick ? (sickLeft > 100f ? 2 : 1) : 0, !HardcoreSurvival.RawOn);
 
-            // panel: slides in when it appears, shakes when something bad happens
-            if (HardcoreSurvival.BadEvent != seenBad) { seenBad = HardcoreSurvival.BadEvent; shakeAt = t; }
-            float sk = (t - shakeAt) / 0.5f;
-            float shake = sk < 1f ? (1f - sk) * Mathf.Sin(sk * 40f) * 7f : 0f;
+            // panel: slides in when it appears (the bars no longer shake on a bad event)
+            float shake = 0f;
             float inK = Kit.EaseOut((t - bornAt) / 0.5f);
             box.anchoredPosition = boxPos + new Vector2(shake + (1f - inK) * 300f, 0f);
             if (nat == null && t >= natTry) { natTry = t + 1f; nat = NativeRows.Build(); }
