@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.6.5";
+    public const string Version = "2.6.6";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1107,7 +1107,7 @@ namespace BCUI_HC
 
                 // left half: health, the gear above it
                 float yl = Place(health, par, true, hb.xMin, y0);
-                yl = Place(oxygen, par, true, hb.xMin, yl);
+                Air(me, par, hb.xMin, yl);
                 Tint(hunger, new Color32(0x9C, 0x5B, 0x34, 255));
                 Tint(thirst, new Color32(0x3B, 0x8E, 0xD4, 255));
                 // sleep, heat and sickness sit in the screen's bottom-left corner, stacked up from the very bottom
@@ -1153,6 +1153,49 @@ namespace BCUI_HC
                 Color k = c; k.a = im.color.a;
                 if (im.color != k) im.color = k;
             }
+        }
+
+        // a white air bar right above health (a stripped copy of the health row); replaces the game's radial
+        static GameObject air;
+        static Slider[] airSl = new Slider[0];
+        static CanvasGroup radialCg;
+        static void Air(Network_Player me, RectTransform par, float x, float y)
+        {
+            PlayerStats st = me.Stats;
+            if (st == null || st.stat_oxygen == null) return;
+            if (radialCg == null && st.canvas != null && st.canvas.fatigueParent != null)
+            {
+                radialCg = st.canvas.fatigueParent.GetComponent<CanvasGroup>();
+                if (radialCg == null) radialCg = st.canvas.fatigueParent.AddComponent<CanvasGroup>();
+            }
+            if (radialCg != null && radialCg.alpha != 0f) radialCg.alpha = 0f;
+            if ((air == null || air.transform.parent != par) && health != null)
+            {
+                if (air != null) Object.Destroy(air);
+                air = Object.Instantiate(health.gameObject, par, false);
+                air.name = "BC_HC_Air";
+                foreach (MonoBehaviour mb in air.GetComponentsInChildren<MonoBehaviour>(true))
+                    if (mb != null && !(mb is Graphic) && !(mb is Slider) && !(mb is LayoutElement) && !(mb is UnityEngine.UI.Mask) && !(mb is UnityEngine.UI.RectMask2D) && !(mb is Shadow)) Object.DestroyImmediate(mb);
+                LayoutElement le = air.GetComponent<LayoutElement>();
+                if (le == null) le = air.AddComponent<LayoutElement>();
+                le.ignoreLayout = true;
+                foreach (Image im in air.GetComponentsInChildren<Image>(true))
+                    if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) im.enabled = false;
+                airSl = air.GetComponentsInChildren<Slider>(true);
+                foreach (Slider s in airSl)
+                {
+                    s.interactable = false; s.minValue = 0f; s.maxValue = 1f;
+                    if (s.fillRect != null) { Image f = s.fillRect.GetComponent<Image>(); if (f != null) f.color = new Color(0.95f, 0.95f, 0.93f, f.color.a); }
+                }
+            }
+            if (air == null) return;
+            float v = st.stat_oxygen.NormalValue;
+            bool show = v < 0.999f;
+            if (air.activeSelf != show) air.SetActive(show);
+            if (!show) return;
+            foreach (Slider s in airSl) if (s != null) s.value = v;
+            RectTransform rt = (RectTransform)air.transform;
+            rt.anchoredPosition += Delta(rt, par, true, x, y);
         }
 
         static void Gear(PlayerInventory inv, RectTransform par, float x, float y)
@@ -1208,6 +1251,9 @@ namespace BCUI_HC
             foreach (CanvasGroup cg in hiddenCg) if (cg != null) cg.alpha = 1f;
             hiddenCg.Clear();
             if (gear != null) Object.Destroy(gear.gameObject);
+            if (air != null) Object.Destroy(air);
+            if (radialCg != null) radialCg.alpha = 1f;
+            air = null; radialCg = null;
             gear = null; health = hunger = thirst = oxygen = null;
         }
     }
