@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.2";
+    public const string Version = "2.5.3";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -609,8 +609,8 @@ public class HardcoreSurvival : Mod
         float coldT = alive && TempOn ? Cold() : 0f;
         ColdFx = Approach(ColdFx, coldT, 0.4f, 0.3f, dt);
         FreezeFx = Approach(FreezeFx, alive && freezing ? 1f : 0f, 0.8f, 0.5f, dt);
-        FeverFx = Approach(FeverFx, alive && feverLeft > 0f && TempOn ? 1f : 0f, 0.4f, 0.3f, dt);
-        WarmFx = Approach(WarmFx, alive && nearFire && TempOn ? 1f : 0f, 0.8f, 0.5f, dt);
+        FeverFx = 0f;
+        WarmFx = 0f; // no orange "warm" filter by the fire
         VomitFx = Mathf.MoveTowards(VomitFx, 0f, dt / 1.6f);
         HurtFx = Mathf.MoveTowards(HurtFx, 0f, dt / 0.7f);
 
@@ -678,9 +678,6 @@ public class HardcoreSurvival : Mod
                 pitch += trem * (Mathf.PerlinNoise(t * 13f, 5.3f) - 0.5f) * 1.5f;
                 yaw += trem * (Mathf.PerlinNoise(t * 9f, 8.1f) - 0.5f) * 1.0f;
             }
-            // fever: a slow, heavy, dizzy sway
-            roll += FeverFx * (Mathf.Sin(t * 0.6f) * 2.2f + (Mathf.PerlinNoise(t * 0.8f, 2.2f) - 0.5f) * 1.6f);
-            pitch += FeverFx * (Mathf.PerlinNoise(t * 0.5f, 6.6f) - 0.5f) * 1.4f;
             roll += VomitFx * Mathf.Sin(VomitFx * 9f) * 6f * VomitFx;
             roll += HurtFx * (Mathf.PerlinNoise(t * 25f, 7f) - 0.5f) * 3f;
             if (Mathf.Abs(roll) > 0.001f || Mathf.Abs(pitch) > 0.001f || Mathf.Abs(yaw) > 0.001f)
@@ -709,12 +706,9 @@ public class HardcoreSurvival : Mod
         VignetteModel.Settings v = pp.vignette.settings;
         float vi = Mathf.Max(FatFx * (0.32f + 0.12f * pulse), Mathf.Max(SickFx * (0.3f + 0.12f * pulse), ColdFx * 0.38f));
         vi = Mathf.Max(vi, Mathf.Max(VomitFx * 0.55f, HurtFx * 0.5f));
-        vi = Mathf.Max(vi, WarmFx * 0.22f);
-        vi = Mathf.Max(vi, FeverFx * (0.34f + 0.1f * pulse));
         vi = Mathf.Max(vi, Blink * 0.6f);
         Color vc = Color.black;
         float wCold = ColdFx + FreezeFx, wSick = SickFx + VomitFx, wWarm = WarmFx * (1f - ColdFx);
-        wWarm += FeverFx * 1.5f;
         float wSum = wCold + wSick + wWarm + FatFx + 0.0001f;
         vc = (new Color(0.12f, 0.32f, 0.55f) * wCold + new Color(0.18f, 0.3f, 0.02f) * wSick + new Color(0.5f, 0.2f, 0.02f) * wWarm + Color.black * FatFx) / wSum;
         if (HurtFx > 0f) vc = Color.Lerp(vc, new Color(0.45f, 0.02f, 0.02f), HurtFx * 0.8f);
@@ -1057,7 +1051,7 @@ namespace BCUI_HC
                         if (tn.Contains("divider") && tr.GetComponent<Image>() != null) notches.Add(tr as RectTransform);
                         if (tn.Contains("blink") || tn.Contains("bonus") || tn.Contains("divider")) tr.gameObject.SetActive(false);
                     }
-                    // heat row: the game's own notch marks where the cold (35%) and the fever (90%) begin
+                    // heat row: the game's own notch marks where the cold (35%) begins
                     if (i == 1 && notch != null && ss.Length > 0 && ss[0].fillRect != null)
                     {
                         // same parent as the game's notches (the row itself), on top of everything, spread over the visible fill
@@ -1069,7 +1063,7 @@ namespace BCUI_HC
                         Debug.Log("[HardcoreSurvival] marcadores calor: " + notch.name + " " + notch.rect.size + " x " + l.x + ".." + r.x);
                         // the game uses a pair of notches (top and bottom edge) per marker
                         foreach (RectTransform nt in notches)
-                        foreach (float f in new float[] { 0.35f, 0.9f })
+                        foreach (float f in new float[] { 0.35f })
                         {
                             GameObject m = Object.Instantiate(nt.gameObject, par, false);
                             m.name = "BC_HC_Mark";
