@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.1";
+    public const string Version = "1.6.2";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -731,9 +731,22 @@ public class LeatherUI : Mod
             if (k1 < 0.01f) k1 = unit;
             float cw = Mathf.Max(1f, cv.width * k1), ch = Mathf.Max(1f, cv.height * k1);
             float sc = 0.75f * Mathf.Min(MaxCard, Mathf.Min((cx1 - cx0) / cw, (content - floor) / ch));
+            if ((cx1 - cx0) < cw * 0.8f)
+            {
+                // no room beside the inventory (a chest or another panel is open too): the card goes to the
+                // foot of the left page, under the recipe list, which then scrolls in the room above it
+                float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
+                cardScale = Mathf.Round(Mathf.Clamp(Mathf.Min(1f, (lx1 - lx0) / cw), MinCard, 1f) * 20f) / 20f;
+                float cardH = ch * cardScale;
+                if (listOn) listRoom = Mathf.Max(ListHead + 60f, listRoom - Mathf.Floor((cardH + 16f) / unit));
+                cardTarget = new Vector2(Mathf.Round(lx1 - 6f - cw * cardScale * 0.5f), Mathf.Round(floor + cardH));
+            }
+            else
+            {
             cardScale = Mathf.Round(Mathf.Clamp(sc, 0.8f, MaxCard) * 20f) / 20f;
             // lined up with the page header on the left and with the inventory title on top
             cardTarget = new Vector2(Mathf.Round(cx0 + cardT.rect.width * k1 * cardScale * 0.5f - (cv.xMin - cardT.rect.xMin) * k1 * cardScale), Mathf.Round(content - 14f));
+            }
         }
         string why = "inv " + R(inv) + " shift " + invShift + " content " + Mathf.Round(content) + " floor " + Mathf.Round(floor)
             + " card x" + cardScale + (cardVisHas ? " vis " + R(cardVis) : "") + " | " + invWhy + " | parts" + parts + " | card bottom=" + cardWhy + " cardRect " + (cardT != null ? R(cardT.rect) : "");
