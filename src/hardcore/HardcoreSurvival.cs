@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.0";
+    public const string Version = "2.5.1";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -820,7 +820,7 @@ public class HardcoreSurvival : Mod
         float now = Time.unscaledTime;
         if (now >= sendAt)
         {
-            sendAt = now + 0.5f;
+            sendAt = now + 1f;
             PlayerStats st = me.Stats;
             if (st != null)
             {
@@ -830,7 +830,7 @@ public class HardcoreSurvival : Mod
                     RawOn ? 1f - Mathf.Clamp01(sickLeft / SickMax) : -1f, wet, insul };
                 StringBuilder sb = new StringBuilder("hc");
                 foreach (float f in v) sb.Append('|').Append(f.ToString("0.###", ci));
-                try { SendNetworkMessage(sb.ToString(), Target.Other, Steamworks.EP2PSend.k_EP2PSendUnreliable, NetSlug); } catch { }
+                try { SendNetworkMessage(sb.ToString(), Target.Other, Steamworks.EP2PSend.k_EP2PSendReliable, NetSlug); } catch { }
             }
         }
         if (now >= scanAt) { scanAt = now + 1f; others = UnityEngine.Object.FindObjectsOfType<Network_Player>(); }
@@ -859,7 +859,7 @@ public class HardcoreSurvival : Mod
         float[] fs; float at;
         friendStats.TryGetValue(id, out fs);
         friendAt.TryGetValue(id, out at);
-        if (fs != null && now - at > 6f) fs = null;
+        if (fs != null && now - at > 8f) fs = null;
         bool vanilla = false;
         if (fs == null)
         {
