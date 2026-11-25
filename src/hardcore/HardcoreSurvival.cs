@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.9";
+    public const string Version = "2.5.0";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -556,7 +556,7 @@ public class HardcoreSurvival : Mod
             }
             if (inWater) target -= 0.65f;
             else target -= 0.2f * wet;
-            float rate = inWater ? 1f / 66f : 1f / 90f;
+            float rate = inWater ? 1f / 120f : 1f / 270f;
             // a fire on the raft cannot warm you while you are in the sea
             if (inWater) nearFire = false;
             // next to a heat source: warms fast, a little slower while the clothes are still wet
@@ -590,30 +590,7 @@ public class HardcoreSurvival : Mod
                 Drain(st.stat_health, 0.15f * dt, 0.1f);
                 if (now >= nextFreezeHurt) { nextFreezeHurt = now + UnityEngine.Random.Range(6f, 10f); Emit(st, "eventEmitter_Damaged"); HurtFx = 1f; BadEvent++; }
             }
-            // too hot: staying by the heat once you are warm (worse in leather) builds up into a fever
-            bool hot = temp > 0.9f;
-            if (hot) heatT += dt * (1f + 1.5f * insul);
-            else heatT = Mathf.Max(0f, heatT - dt * 0.5f);
-            int hs = feverLeft > 0f ? 2 : (hot ? 1 : 0);
-            if (hs == 1 && hotStage == 0) Msg("ESTÁS COM MUITO CALOR", "Afasta-te do calor ou vais ficar com febre.", true);
-            if (heatT >= 60f && feverLeft <= 0f)
-            {
-                feverLeft = 240f; heatT = 0f; hs = 2; BadEvent++;
-                Msg("ESTÁS COM FEBRE", "Aqueceste demais. Afasta-te do calor e bebe água.", true);
-                Emit(st, "eventEmitter_Damaged");
-            }
-            hotStage = hs;
-            if (feverLeft > 0f)
-            {
-                // the fever only passes once you have cooled down
-                if (temp < 0.85f) feverLeft -= dt;
-                if (st != null)
-                {
-                    Drain(st.stat_thirst.Normal, 0.18f * dt, 0f);
-                    Drain(st.stat_health, 0.05f * dt, 0.3f);
-                }
-                if (feverLeft <= 0f) { feverLeft = 0f; Msg("A FEBRE PASSOU", "Já te sentes melhor.", false); }
-            }
+            heatT = 0f; feverLeft = 0f; hotStage = 0;
             if (cold > 0.4f && now >= nextShiver) { nextShiver = now + UnityEngine.Random.Range(12f, 20f); Emit(st, "eventEmitter_LowBreath"); }
             int cs = freezing ? 2 : (cold > 0f ? 1 : 0);
             if (cs > coldStage)
