@@ -1,8 +1,8 @@
 {
   "name": "Inspecionar",
   "author": "BestCode",
-  "description": "Look at a grill, purifier, smelter, cooking pot, juicer, crop plot or tank : a small parchment window shows fuel, battery, water and how far along each item is.",
-  "version": "1.2.1",
+  "description": "Look at a grill, purifier, smelter, cooking pot, juicer, crop plot or tank : a small parchment window shows fuel, battery, water and how far along each item is. Aim at an animal (shark, boar, screecher, bears...) to see its life.",
+  "version": "1.3.0",
   "license": "MIT",
   "icon": "",
   "banner": "",

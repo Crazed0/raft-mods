@@ -11,12 +11,14 @@ using RaftModLoader;
 // grills, purifiers and smelters (fuel or battery, each slot cooking and how far along), the electric
 // purifier (on/off, battery, water), cooking pot and juicer (recipe, time, portions), crop plots
 // (growth of each plant) and any tank or battery. It shows by itself in the top left while you look at one.
+// 1.3.0: animals too (shark, boar, screecher, bears, llamas...): aim at one up to 40 m away to see its life.
 public class Inspect : Mod
 {
-    public const string Version = "1.2.1";
+    public const string Version = "1.3.0";
     static bool open;
     static float next;
-    static Block shown;
+    static UnityEngine.Object shown;
+    const float BlockRange = 4.5f, BeastRange = 40f;
 
     public void Start() { Debug.Log("[Inspecionar] carregado v" + Version); }
     public void OnModUnload() { BCUI_IN.InspectHud.Kill(); }
@@ -30,13 +32,25 @@ public class Inspect : Mod
         if (menu || me == null) { BCUI_IN.InspectHud.Hide(); return; }
         if (Time.unscaledTime < next) return;
         next = Time.unscaledTime + 0.25f;
-        Block b = Look();
-        if (b == null) { shown = null; BCUI_IN.InspectHud.Hide(); return; }
+        Network_Entity beast = null;
+        Block b = Look(out beast);
+        if (b == null && beast == null) { shown = null; BCUI_IN.InspectHud.Hide(); return; }
         List<Row> rows = new List<Row>();
-        try { Describe(b, rows); } catch (Exception e) { rows.Add(new Row("erro: " + e.Message, -1f)); }
+        string title;
+        if (beast != null)
+        {
+            title = BeastName(beast);
+            try { DescribeBeast(beast, rows); } catch (Exception e) { rows.Add(new Row("erro: " + e.Message, -1f)); }
+            if (beast != shown) { shown = beast; Debug.Log("[Inspecionar] a ver animal " + beast.name + " (" + title + ")"); }
+        }
+        else
+        {
+            title = NameOf(b.buildableItem);
+            try { Describe(b, rows); } catch (Exception e) { rows.Add(new Row("erro: " + e.Message, -1f)); }
+            if (b != shown) { shown = b; Debug.Log("[Inspecionar] a ver " + b.GetType().Name + " (" + b.buildableItem.UniqueName + ") linhas " + rows.Count); }
+        }
         if (rows.Count == 0) rows.Add(new Row("Nada para mostrar", -1f));
-        if (b != shown) { shown = b; Debug.Log("[Inspecionar] a ver " + b.GetType().Name + " (" + b.buildableItem.UniqueName + ") linhas " + rows.Count); }
-        BCUI_IN.InspectHud.Show(NameOf(b.buildableItem), rows);
+        BCUI_IN.InspectHud.Show(title, rows);
     }
 
     public struct Row
@@ -46,11 +60,13 @@ public class Inspect : Mod
         public Row(string t, float b, bool g) { text = t; bar = b; good = g; }
     }
 
-    static Block Look()
+    static Block Look(out Network_Entity beast)
     {
+        beast = null;
         Camera cam = Camera.main;
         if (cam == null) return null;
-        RaycastHit[] hits = Physics.RaycastAll(cam.transform.position, cam.transform.forward, 4.5f, ~0, QueryTriggerInteraction.Collide);
+        Vector3 o = cam.transform.position, d = cam.transform.forward;
+        RaycastHit[] hits = Physics.RaycastAll(o, d, BlockRange, ~0, QueryTriggerInteraction.Collide);
         Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
         foreach (RaycastHit h in hits)
         {
@@ -60,7 +76,79 @@ public class Inspect : Mod
             if (b is Block_CookingStand || b is Block_ElectricPurifier || b is Cropplot || b is Block_CookingTable_Pot || b is Block_CookingTable_Juicer
                 || b.GetComponentInChildren<Tank>() != null || b.GetComponentInChildren<Battery>() != null) return b;
         }
+        beast = LookBeast(o, d);
         return null;
+    }
+
+    // the nearest animal along the view (a slightly fat ray, they move), unless a wall or the floor is in front of it
+    static Network_Entity LookBeast(Vector3 o, Vector3 d)
+    {
+        RaycastHit[] hits = Physics.SphereCastAll(o, 0.35f, d, BeastRange, ~0, QueryTriggerInteraction.Collide);
+        Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
+        float wall = BeastRange + 1f;
+        foreach (RaycastHit h in Physics.RaycastAll(o, d, BeastRange, ~0, QueryTriggerInteraction.Ignore))
+            if (h.distance < wall && h.collider.GetComponentInParent<Network_Entity>() == null && h.collider.GetComponentInParent<Network_Player>() == null) wall = h.distance;
+        foreach (RaycastHit h in hits)
+        {
+            Collider c = h.collider;
+            if (c == null || c.GetComponentInParent<Network_Player>() != null) continue;
+            if (h.distance > wall) break;   // a solid thing in the way (the raft, an island, a wall) hides what is behind it
+            Network_Entity e = c.GetComponentInParent<Network_Entity>();
+            if (e != null && e.stat_health != null && e.entityType != EntityType.Player && e.GetComponentInParent<Network_Player>() == null
+                && (c.GetComponentInParent<AI_NetworkBehaviour>() != null || e.GetComponentInChildren<AI_NetworkBehaviour>() != null)) return e;
+        }
+        return null;
+    }
+
+    static string BeastName(Network_Entity e)
+    {
+        AI_NetworkBehaviour ai = e.GetComponentInParent<AI_NetworkBehaviour>();
+        if (ai == null) ai = e.GetComponentInChildren<AI_NetworkBehaviour>();
+        if (ai != null)
+        {
+            switch (ai.behaviourType)
+            {
+                case AI_NetworkBehaviourType.Shark: return "Tubarão";
+                case AI_NetworkBehaviourType.StoneBird: case AI_NetworkBehaviourType.StoneBird_Caravan: return "Screecher";
+                case AI_NetworkBehaviourType.PufferFish: return "Baiacu";
+                case AI_NetworkBehaviourType.Llama: return "Lama";
+                case AI_NetworkBehaviourType.Goat: return "Cabra";
+                case AI_NetworkBehaviourType.Chicken: return "Galinha";
+                case AI_NetworkBehaviourType.Boar: return "Javali";
+                case AI_NetworkBehaviourType.Rat: case AI_NetworkBehaviourType.Rat_Tangaroa: return "Rato";
+                case AI_NetworkBehaviourType.Bear: return "Urso";
+                case AI_NetworkBehaviourType.MamaBear: return "Ursa Mãe";
+                case AI_NetworkBehaviourType.PolarBear: return "Urso Polar";
+                case AI_NetworkBehaviourType.BugSwarm_Bee: return "Enxame de Abelhas";
+                case AI_NetworkBehaviourType.Pig: return "Porco";
+                case AI_NetworkBehaviourType.ButlerBot: return "Robô Mordomo";
+                case AI_NetworkBehaviourType.Boss_Varuna: return "Varuna";
+                case AI_NetworkBehaviourType.AnglerFish: return "Peixe-Pescador";
+                case AI_NetworkBehaviourType.Roach: return "Barata";
+                case AI_NetworkBehaviourType.Puffin: return "Papagaio-do-Mar";
+                case AI_NetworkBehaviourType.Dolphin: return "Golfinho";
+                case AI_NetworkBehaviourType.Whale: return "Baleia";
+                case AI_NetworkBehaviourType.BirdPack: return "Bando de Aves";
+                case AI_NetworkBehaviourType.Turtle: return "Tartaruga";
+                case AI_NetworkBehaviourType.Stingray: return "Raia";
+                case AI_NetworkBehaviourType.Hyena: return "Hiena";
+                case AI_NetworkBehaviourType.HyenaBoss: return "Hiena Líder";
+            }
+            string t = ai.behaviourType.ToString();
+            if (t.StartsWith("NPC_")) return t.Substring(4);
+        }
+        return e.name.Replace("(Clone)", "").Trim();
+    }
+
+    static void DescribeBeast(Network_Entity e, List<Row> rows)
+    {
+        Stat_Health hp = e.stat_health;
+        float v = Mathf.Max(0f, hp.Value), mx = Mathf.Max(1f, hp.Max);
+        if (e.IsDead || v <= 0f) { rows.Add(new Row("Morto", -1f)); return; }
+        float n = Mathf.Clamp01(v / mx);
+        rows.Add(new Row("Vida: " + Mathf.CeilToInt(v) + "/" + Mathf.RoundToInt(mx) + " (" + Mathf.RoundToInt(n * 100f) + "%)", n, n >= 0.999f));
+        if (e.IsInvurnerable) rows.Add(new Row("Invulnerável", -1f));
+        else if (hp.regenPerSecond > 0f && n < 0.999f) rows.Add(new Row("Recupera " + hp.regenPerSecond.ToString("0.#") + "/s", -1f));
     }
 
     static string NameOf(Item_Base it)
