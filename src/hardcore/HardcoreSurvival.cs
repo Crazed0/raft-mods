@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.4.8";
+    public const string Version = "2.4.9";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -278,10 +278,9 @@ public class HardcoreSurvival : Mod
         foreach (string k in HeatNames)
         {
             if (n.IndexOf(k, StringComparison.Ordinal) < 0) continue;
-            if (k.StartsWith("bath")) return true;
-            // lanterns, fire baskets and fireplaces only heat while their flame (light) is on
-            foreach (Light l in b.GetComponentsInChildren<Light>()) if (l.enabled && l.intensity > 0.05f) return true;
-            return false;
+            // lanterns, fire baskets and fireplaces are always lit in Raft (their light lives in the
+            // shared LightSingularity pool, not on the block, so there is nothing to check)
+            return true;
         }
         return false;
     }
