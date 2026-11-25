@@ -1,0 +1,14 @@
+{
+  "name": "Skills",
+  "author": "BestCode",
+  "description": "Six skills that level up as you play, saved per world: Pescador (fish pull less), Recolha (hook goes further and grabs faster), Lenhador (chance of double wood), Cacador (more damage to animals), Mergulhador (oxygen lasts longer), Agricultor (chance of an extra crop). Small panel bottom right, K opens the details. Console: skills, skills xp <skill> <n>, skills reset.",
+  "version":"1.2.0",
+  "license": "MIT",
+  "icon": "",
+  "banner": "",
+  "gameVersion": "",
+  "updateUrl": "",
+  "isModPermanent": false,
+  "requiredByAllPlayers": false,
+  "excludedFiles": []
+}

@@ -1,0 +1,6 @@
+publish-out/
+PARA_O_PEDRO.md
+*.rmod
+*.zip
+bin/
+obj/

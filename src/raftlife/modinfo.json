@@ -1,0 +1,14 @@
+{
+  "name": "Raft Life",
+  "author": "BestCode",
+  "description": "Small natural touches. Inventory full: what you pick up lands in a box beside you on the raft instead of being thrown into the sea. Rain slowly fills water tanks that have open sky above them. A shark hit 3 times in a row backs off for a while before coming back. Console: life.status, life.rain, life.shark.",
+  "version": "1.1.0",
+  "license": "MIT",
+  "icon": "",
+  "banner": "",
+  "gameVersion": "",
+  "updateUrl": "",
+  "isModPermanent": false,
+  "requiredByAllPlayers": true,
+  "excludedFiles": []
+}

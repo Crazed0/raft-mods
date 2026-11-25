@@ -1,0 +1,14 @@
+{
+  "name": "Stackable Chests",
+  "author": "BestCode",
+  "description": "Place chests on top of other chests, exactly aligned. Only chests can go on a lid; remove the bottom one and the ones above fall like any unsupported block. Looking at a chest shows the 3 things it holds the most of. Console: chests.status.",
+  "version": "1.1.0",
+  "license": "MIT",
+  "icon": "",
+  "banner": "",
+  "gameVersion": "",
+  "updateUrl": "",
+  "isModPermanent": false,
+  "requiredByAllPlayers": true,
+  "excludedFiles": []
+}

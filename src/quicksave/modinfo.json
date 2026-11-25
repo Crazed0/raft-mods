@@ -1,0 +1,11 @@
+{
+  "name": "Quick Autosave",
+  "author": "BestCode",
+  "description": "Autosaves every 1 minute instead of 10. Shows a countdown top-right and a Jogo guardado notice at the top centre for every player. Change with the console (F10): autosave <minutes>.",
+  "version": "1.3.1",
+  "license": "MIT",
+  "gameVersion": "1.1",
+  "requiredByAllPlayers": false,
+  "isModPermanent": false,
+  "excludedFiles": []
+}

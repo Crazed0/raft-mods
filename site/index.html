@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Raft Mods</title>
+<!--
+  Pagina de entrada FIXA: nunca mudar este ficheiro.
+  A Cloudflare pode guardar /raft/ em cache, por isso a pagina verdadeira esta em app.html
+  e e carregada com ?v=<hash> lido do manifest.json (que nunca fica em cache).
+-->
+<style>
+  html, body { margin: 0; min-height: 100vh; background: #13607e; color: #fbf1dc; font: 16px system-ui, sans-serif; }
+  #wait { padding: 40px 16px; text-align: center; }
+  #wait a { color: #ffcf5a; }
+</style>
+</head>
+<body>
+<div id="wait">A carregar... <noscript>Abre <a href="app.html">esta pagina</a>.</noscript></div>
+<script>
+(function () {
+  function go(v) {
+    var url = 'app.html?v=' + encodeURIComponent(v || Date.now());
+    fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.text();
+    }).then(function (html) {
+      document.open(); document.write(html); document.close();
+    }).catch(function () { location.replace(url); });
+  }
+  fetch('manifest.json?t=' + Date.now(), { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (m) { go(m.site || m.updated); })
+    .catch(function () { go(); });
+})();
+</script>
+</body>
+</html>

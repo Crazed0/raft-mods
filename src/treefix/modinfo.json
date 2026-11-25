@@ -1,0 +1,11 @@
+{
+  "name": "Tree Harvest Fix",
+  "author": "BestCode",
+  "description": "Fixes the NullReferenceException in HarvestableTree when another player cuts trees added by More Bananas / NoMoreUselessPalms.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "gameVersion": "1.1",
+  "requiredByAllPlayers": false,
+  "isModPermanent": false,
+  "excludedFiles": []
+}

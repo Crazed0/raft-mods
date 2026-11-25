@@ -1,0 +1,8 @@
+{
+  "name": "Diario de Bordo",
+  "author": "BestCode",
+  "description": "Diario de bordo no T: ilhas, peixes, comida, viagem e registo por mundo.",
+  "version": "1.2.0",
+  "license": "MIT",
+  "requiredByAllPlayers": false
+}
