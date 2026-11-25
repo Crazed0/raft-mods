@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.0";
+    public const string Version = "1.6.1";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -700,7 +700,10 @@ public class LeatherUI : Mod
             if (invVis.TryGetValue(rt, out v)) hr = Part(hr, rt.rect, v);
             // a panel that draws nothing (an empty holder) takes no room; its bare rect used to push the
             // inventory ~95 units off the foot of the page
-            else if (invVis.Count > 0 || !rt.gameObject.activeInHierarchy) continue;
+            else if (!rt.gameObject.activeInHierarchy) continue;
+            // the player's own inventory always counts, even when its drawing was not measured
+            // (opening a chest left it out and the recipe card was drawn over it)
+            else if (invVis.Count > 0 && rt.name != "Inventory_Player") continue;
             parts += " " + rt.name + R(hr);
             inv = any ? Union(inv, hr) : hr;
             any = true;

@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.3";
+    public const string Version = "2.5.4";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -80,7 +80,7 @@ public class HardcoreSurvival : Mod
     bool fxOwn;
     PostProcessingProfile fxProfile;
 
-    const float TiredFrom = 18f, TiredMax = 72f;
+    const float TiredFrom = 57.6f, TiredMax = 72f; // sleepy only in the last 20% of the energy bar
 
     public void Start()
     {
