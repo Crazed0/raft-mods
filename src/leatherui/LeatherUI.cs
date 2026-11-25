@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.6.3";
+    public const string Version = "1.6.4";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -589,6 +589,8 @@ public class LeatherUI : Mod
             new Vector2(0.5f, 0f), new Vector2(0.5f, 1f), -1f, 0f, -1f, 0f);
 
         Header(left, true, "FABRICO", "Receitas e materiais");
+        leftTitle = left.Find("Title").GetComponent<Text>();
+        leftSub = left.Find("Sub").GetComponent<Text>();
         Header(right, false, "INVENTÁRIO", "Mochila e arrumação");
         return bookRoot.gameObject;
     }
@@ -739,7 +741,9 @@ public class LeatherUI : Mod
             float tx = (lx0 + lx1) * 0.5f - store.center.x;
             float tlo = cx - w * 0.5f + 16f - store.xMin, thi = cx - 16f - store.xMax;
             tx = tlo <= thi ? Mathf.Clamp(tx, tlo, thi) : thi;
-            storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(content - store.yMax));
+            // the chest's top lines up with the inventory's top
+            float top0 = Mathf.Min(content, inv.yMax + (inv.yMax + sy > content ? content - inv.yMax : sy));
+            storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(top0 - store.yMax));
         }
         invShift = new Vector2(Mathf.Round(sx), Mathf.Round(sy));
         if (cardOn && !storeOpen)
@@ -1196,7 +1200,8 @@ public class LeatherUI : Mod
             foreach (Canvas cv in r.GetComponentsInChildren<Canvas>(true))
                 if (cv.overrideSorting && cv.transform != r && !UnderHotbar(cv.transform)) { cv.overrideSorting = false; flattened.Add(cv); }
             foreach (Image img in r.GetComponentsInChildren<Image>(true))
-                if (!hidden.ContainsKey(img) && img.sprite != null && PanelSprites.Contains(img.sprite.name) && !UnderHotbar(img.transform))
+                if (!hidden.ContainsKey(img) && img.sprite != null && !UnderHotbar(img.transform)
+                    && (PanelSprites.Contains(img.sprite.name) || ChestBox(img)))
                     hidden[img] = new Held<Color>();
             foreach (Text t in r.GetComponentsInChildren<Text>(true))
             {
@@ -1207,6 +1212,21 @@ public class LeatherUI : Mod
                 inked[t] = k;
             }
         }
+    }
+
+    // the brown box behind a chest's slots: an image on the storage panel itself, or one of its direct
+    // children that covers most of it (the slots, icon and buttons are much smaller)
+    bool ChestBox(Image img)
+    {
+        Transform t = img.transform;
+        RectTransform panel = null;
+        if (t.parent == invParentT) panel = t as RectTransform;
+        else if (t.parent != null && t.parent.parent == invParentT) panel = t.parent as RectTransform;
+        if (panel == null || !panel.name.Contains("Storage")) return false;
+        if (t == panel) return true;
+        Rect a = ((RectTransform)t).rect, b = panel.rect;
+        return a.width >= b.width * 0.8f && a.height >= b.height * 0.6f && t.GetComponentInChildren<Text>(true) == null
+            && img.GetComponentsInChildren<Image>(true).Length <= 2;
     }
 
     void Track(RectTransform rt)
@@ -1277,7 +1297,10 @@ public class LeatherUI : Mod
         craftCG.interactable = !hide;
         craftCG.blocksRaycasts = !hide;
         craftHid = hide;
+        if (leftTitle != null) leftTitle.text = hide ? "BAÚ" : "FABRICO";
+        if (leftSub != null) leftSub.text = hide ? "Arrumação e mantimentos" : "Receitas e materiais";
     }
+    Text leftTitle, leftSub;
 
     void Restore()
     {
