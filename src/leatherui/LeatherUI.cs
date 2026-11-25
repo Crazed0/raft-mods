@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "1.7.0";
+    public const string Version = "1.8.0";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -588,10 +588,12 @@ public class LeatherUI : Mod
         Span(Pic(pages, "Fold", null, new Color(0.16f, 0.08f, 0.03f, 0.45f), Image.Type.Simple).rectTransform,
             new Vector2(0.5f, 0f), new Vector2(0.5f, 1f), -1f, 0f, -1f, 0f);
 
-        Header(left, true, "FABRICO", "Receitas e materiais");
+        Header(left, true, "INVENTÁRIO", "Mochila e arrumação");
         leftTitle = left.Find("Title").GetComponent<Text>();
         leftSub = left.Find("Sub").GetComponent<Text>();
-        Header(right, false, "INVENTÁRIO", "Mochila e arrumação");
+        Header(right, false, "FABRICO", "Receitas e materiais");
+        rightTitle = right.Find("Title").GetComponent<Text>();
+        rightSub = right.Find("Sub").GetComponent<Text>();
         return bookRoot.gameObject;
     }
 
@@ -667,7 +669,8 @@ public class LeatherUI : Mod
         listOn = false;
         if (craftRef != null)
         {
-            float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
+            // the category column and recipe list live on the right page
+            float lx0 = cx + PadIn, lx1 = cx + w * 0.5f - PadOut;
             Rect col = Home(craftRef, craftingT as RectTransform);
             // the drawn left edge of the category buttons lines up with the page title
             float inset = craftRef.rect.width > 0.01f ? colInset * col.width / craftRef.rect.width : 0f;
@@ -706,6 +709,7 @@ public class LeatherUI : Mod
                 if (invVis.TryGetValue(rt, out v)) hr = Part(hr, rt.rect, v);
                 parts += " " + rt.name + R(hr);
                 store = storeOpen ? Union(store, hr) : hr;
+                storeT = rt;
                 storeOpen = true;
                 continue;
             }
@@ -717,6 +721,7 @@ public class LeatherUI : Mod
             // (opening a chest left it out and the recipe card was drawn over it)
             else if (invVis.Count > 0 && rt.name != "Inventory_Player") continue;
             parts += " " + rt.name + R(hr);
+            if (rt.name == "Inventory_Player") { invT = rt; invHome = hr; }
             inv = any ? Union(inv, hr) : hr;
             any = true;
         }
@@ -733,23 +738,23 @@ public class LeatherUI : Mod
         sx = lo <= hi ? Mathf.Clamp(sx, lo, hi) : lo;
         // too tall for the page: its top stays under the header
         if (inv.yMax + sy > content) sy = content - inv.yMax;
+        // the inventory always stands on the left page against the spine, its first row of slots at the
+        // same height, whether the chest or the crafting list is on the right page
+        Rect ib = invT != null ? invHome : inv;
+        float T = content - SlotTopGap;
+        sx = cx - 70f - ib.xMax;
+        sy = T + SlotDrop(invT) - ib.yMax;
         if (storeOpen)
         {
-            // chest open: the inventory centred on the right page, the chest centred on the left one
-            // both lean on the spine, one each side of it
-            sx = cx + 70f - inv.xMin;
-            float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
-            float tx = cx - 70f - store.xMax;
-            float tlo = cx - w * 0.5f + 16f - store.xMin, thi = cx - 16f - store.xMax;
-            tx = tlo <= thi ? Mathf.Clamp(tx, tlo, thi) : thi;
-            // the chest's top lines up with the inventory's top
-            float top0 = Mathf.Min(content, inv.yMax + (inv.yMax + sy > content ? content - inv.yMax : sy));
-            storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(top0 - store.yMax));
+            // chest open, mirrored: the inventory on the left page, the chest on the right one, both leaning
+            // on the spine; the first rows of slots line up (the inventory's own title is put away)
+            float tx = cx + 70f - store.xMin;
+            storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(T + SlotDrop(storeT) - store.yMax));
         }
         invShift = new Vector2(Mathf.Round(sx), Mathf.Round(sy));
         if (cardOn && !storeOpen)
         {
-            float cx0 = rx0, cx1 = inv.xMin + sx - 24f;
+            float cx0 = cx - w * 0.5f + PadOut, cx1 = ib.xMin + sx - 24f;
             Rect cv = cardVisHas ? cardVis : cardT.rect;
             float kNow = Mathf.Abs(bookRoot.InverseTransformVector(cardT.TransformVector(Vector3.up)).y);
             float k1 = cardHas && Mathf.Abs(cardT.localScale.y) > 0.001f ? kNow * cardScaleOrig.y / cardT.localScale.y : kNow;
@@ -760,7 +765,7 @@ public class LeatherUI : Mod
             {
                 // no room beside the inventory (a chest or another panel is open too): the card goes to the
                 // foot of the left page, under the recipe list, which then scrolls in the room above it
-                float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
+                float lx0 = cx + PadIn, lx1 = cx + w * 0.5f - PadOut;
                 cardScale = Mathf.Round(Mathf.Clamp(Mathf.Min(1f, (lx1 - lx0) / cw), MinCard, 1f) * 20f) / 20f;
                 float cardH = ch * cardScale;
                 if (listOn) listRoom = Mathf.Max(ListHead + 60f, listRoom - Mathf.Floor((cardH + 16f) / unit));
@@ -1255,6 +1260,7 @@ public class LeatherUI : Mod
         Layout();
         HideCrafting(storeOpen);
         HideItemInfo(true);
+        InvTitle(true);
 
         // the game may move, recolour or retint any of these itself: whatever it sets becomes the new original
         foreach (KeyValuePair<RectTransform, Held<Vector2>> kv in moved)
@@ -1312,10 +1318,48 @@ public class LeatherUI : Mod
         craftCG.interactable = !hide;
         craftCG.blocksRaycasts = !hide;
         craftHid = hide;
-        if (leftTitle != null) leftTitle.text = hide ? "BAÚ" : "FABRICO";
-        if (leftSub != null) leftSub.text = hide ? "Arrumação e mantimentos" : "Receitas e materiais";
+        if (rightTitle != null) rightTitle.text = hide ? "BAÚ" : "FABRICO";
+        if (rightSub != null) rightSub.text = hide ? "Arrumação e mantimentos" : "Receitas e materiais";
     }
-    Text leftTitle, leftSub;
+    Text leftTitle, leftSub, rightTitle, rightSub;
+    RectTransform invT, storeT;
+    const float SlotTopGap = 90f;
+    Rect invHome;
+
+    // how far below a panel's top its highest slot starts (moves do not change it)
+    float SlotDrop(RectTransform panel)
+    {
+        if (panel == null) return 0f;
+        float top = float.MinValue;
+        foreach (Slot sl in panel.GetComponentsInChildren<Slot>(false))
+        {
+            if (UnderHotbar(sl.transform)) continue;
+            top = Mathf.Max(top, Bounds((RectTransform)sl.transform, bookRoot).yMax);
+        }
+        if (top == float.MinValue) return 0f;
+        return Mathf.Max(0f, Bounds(panel, bookRoot).yMax - top);
+    }
+
+    // the inventory panel's own title text (above its slots): put away while a chest is open
+    readonly List<CanvasGroup> titleCg = new List<CanvasGroup>();
+    void InvTitle(bool hide)
+    {
+        if (hide && titleCg.Count == 0 && invT != null)
+        {
+            float top = float.MinValue;
+            foreach (Slot sl in invT.GetComponentsInChildren<Slot>(false)) top = Mathf.Max(top, Bounds((RectTransform)sl.transform, bookRoot).yMax);
+            foreach (Text t in invT.GetComponentsInChildren<Text>(false))
+            {
+                if (t.GetComponentInParent<Slot>() != null || top == float.MinValue) continue;
+                if (Bounds(t.rectTransform, bookRoot).yMin < top) continue;
+                CanvasGroup cg = t.GetComponent<CanvasGroup>();
+                if (cg == null) cg = t.gameObject.AddComponent<CanvasGroup>();
+                titleCg.Add(cg);
+            }
+        }
+        foreach (CanvasGroup cg in titleCg) if (cg != null) cg.alpha = hide ? 0f : 1f;
+        if (!hide) titleCg.Clear();
+    }
 
     // the selected item's picture, name and description above the inventory are not shown in the book
     readonly List<CanvasGroup> infoCg = new List<CanvasGroup>();
@@ -1357,6 +1401,7 @@ public class LeatherUI : Mod
     {
         HideCrafting(false);
         HideItemInfo(false);
+        InvTitle(false);
         if (cardHas && cardT != null)
         {
             if (cardT.anchoredPosition == cardPosSet) cardT.anchoredPosition = cardPosOrig;
