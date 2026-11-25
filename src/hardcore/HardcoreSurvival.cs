@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.5.1";
+    public const string Version = "2.5.2";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -259,7 +259,7 @@ public class HardcoreSurvival : Mod
             string seen = "";
             foreach (Block b in blocks)
             {
-                if (b == null || (b.transform.position - pos).sqrMagnitude > 36f) continue;
+                if (b == null || (b.transform.position - pos).sqrMagnitude > 9f) continue;
                 string n = b.buildableItem != null ? b.buildableItem.UniqueName ?? "" : b.name;
                 if (Heats(b, n.ToLowerInvariant())) { seen = n; break; }
             }
