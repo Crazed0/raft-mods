@@ -21,7 +21,33 @@ public class BreakableBigPalms : Mod
     {
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(typeof(BreakableBigPalms).Assembly);
-        Debug.Log("[BreakableBigPalms] loaded v1.0.2. Islands loaded from now on get breakable big palms.");
+        // palms made breakable by an older version still carry the old (much larger) yield
+        int fixedN = 0;
+        foreach (YieldHandler y in Resources.FindObjectsOfTypeAll<YieldHandler>())
+            if (y != null && y.gameObject.scene.IsValid() && Nerf(y)) fixedN++;
+        Debug.Log("[BreakableBigPalms] loaded v1.1.0, " + fixedN + " palmeiras ja carregadas acertadas.");
+    }
+
+    // every hit gives a single item, only now and then two
+    public static bool Nerf(YieldHandler yh)
+    {
+        if (yh == null || yh.yieldAsset == null || yh.yieldAsset.name != "BigPalmYield" || yh.yieldAsset.yieldAssets == null) return false;
+        var mine = new List<Cost>();
+        foreach (Cost c in yh.yieldAsset.yieldAssets)
+            if (c != null && c.item != null) mine.Add(new Cost(c.item, Random.value < DoubleChance ? 2 : 1));
+        SO_ItemYield own = ScriptableObject.CreateInstance<SO_ItemYield>();
+        own.name = "BigPalmYield";
+        own.yieldAssets = mine;
+        yh.yieldAsset = own;
+        // what is left of this palm keeps its count, at the new amounts
+        if (yh.yield != null)
+        {
+            var left = new List<Cost>();
+            foreach (Cost c in yh.yield)
+                if (c != null && c.item != null) left.Add(new Cost(c.item, Random.value < DoubleChance ? 2 : 1));
+            yh.yield = left;
+        }
+        return true;
     }
 
     public void OnModUnload()
@@ -125,7 +151,7 @@ public class BreakableBigPalms : Mod
 
     public static void MakeBreakable(Transform root)
     {
-        if (root.GetComponent<HarvestableTree>() != null) return; // already done
+        if (root.GetComponent<HarvestableTree>() != null) { Nerf(root.GetComponent<YieldHandler>()); return; } // already done
         if (!EnsureTemplate()) return;
 
         GameObject go = root.gameObject;
