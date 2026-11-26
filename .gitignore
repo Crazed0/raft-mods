@@ -4,3 +4,4 @@ PARA_O_PEDRO.md
 *.zip
 bin/
 obj/
+out.dll
