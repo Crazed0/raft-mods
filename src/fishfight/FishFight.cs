@@ -26,7 +26,7 @@ using RaftModLoader;
 // Console (F10): pesca (status) | pesca on | pesca off (back to the game's one click) | pesca demo
 public class FishFight : Mod
 {
-    public const string Version = "1.4.0";
+    public const string Version = "1.4.1";
     public const string HarmonyId = "com.bestcode.fishfight";
     const string PrefOn = "FishFight.On";
 
@@ -779,7 +779,7 @@ namespace BCUI_FF
         RectTransform panel, fillRt, rope, fishRt, card, iconRt, badge;
         CanvasGroup panelGroup, cardGroup;
         Text sizeTxt, status, distTxt, cTitle, cLine1, cLine2;
-        Image[] dots;
+        Text rarity;
         Image fill, danger, tick, fishImg, wake, endAway, endHere, icon, glow;
         float shown, punch, shownTension, fishX, cardBorn = -100f, cardLife;
         string lastStatus = "";
@@ -804,15 +804,11 @@ namespace BCUI_FF
             Kit.Place(status.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 0f), new Vector2(0f, 6f), new Vector2(760f, 66f));
             status.gameObject.SetActive(false);   // the user wants no word above the panel
 
-            // size of the fish + three dots
+            // size of the fish + its rarity
             sizeTxt = Kit.Txt(panel, "Size", "PEIXE", 30, Kit.Brown, TextAnchor.MiddleLeft, false);
             Kit.Place(sizeTxt.rectTransform, Kit.TL, Kit.TL, new Vector2(28f, -12f), new Vector2(360f, 36f));
-            dots = new Image[3];
-            for (int i = 0; i < 3; i++)
-            {
-                dots[i] = Kit.Img(panel, "Dot" + i, circle, Kit.Brown, false);
-                Kit.Place(dots[i].rectTransform, Kit.TR, Kit.C, new Vector2(-80f + i * 22f, -30f), new Vector2(14f, 14f));
-            }
+            rarity = Kit.Txt(panel, "Rarity", "", 26, Kit.Brown, TextAnchor.MiddleRight, false);
+            Kit.Place(rarity.rectTransform, Kit.TR, Kit.TR, new Vector2(-28f, -12f), new Vector2(200f, 36f));
 
             // tension
             Text lt = Kit.Txt(panel, "TensionLabel", "TENSÃO", 22, Kit.A(Kit.Brown, 0.8f), TextAnchor.MiddleLeft, false);
@@ -957,7 +953,8 @@ namespace BCUI_FF
         {
             int lvl = f.diff < 0.34f ? 1 : f.diff < 0.67f ? 2 : 3;
             sizeTxt.text = lvl == 1 ? "PEIXE PEQUENO" : lvl == 2 ? "PEIXE MÉDIO" : "PEIXE GRANDE";
-            for (int i = 0; i < 3; i++) dots[i].color = i < lvl ? (lvl == 3 ? Kit.Bad : Kit.Brown) : Kit.A(Kit.Brown, 0.2f);
+            rarity.text = lvl == 1 ? "COMUM" : lvl == 2 ? "INCOMUM" : "RARO";
+            rarity.color = lvl == 1 ? Kit.A(Kit.Brown, 0.7f) : lvl == 2 ? new Color(0.15f, 0.40f, 0.40f, 1f) : Kit.Bad;
 
             // tension
             shownTension = Mathf.Lerp(shownTension, f.tension, Mathf.Clamp01(dt * 14f));
