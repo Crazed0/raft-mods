@@ -1,0 +1,14 @@
+{
+  "name": "Chest Organizer",
+  "author": "BestCode",
+  "description": "Arrumar jangada: one button in any open chest sorts every chest on the raft by category (the host does the work, everyone sees the result). Also fixes chest contents going out of sync between players when items are taken from closed chests (Craft From All Storage): the host now passes those changes on to everyone, and clients refresh chest contents from the host when they open the inventory or hold the hammer. Console: arrumar | arrumar status.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "icon": "",
+  "banner": "",
+  "gameVersion": "",
+  "updateUrl": "",
+  "isModPermanent": false,
+  "requiredByAllPlayers": true,
+  "excludedFiles": []
+}

@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "2.1.0";
+    public const string Version = "2.1.1";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -251,6 +251,10 @@ public class LeatherUI : Mod
     readonly Held<bool> listVert = new Held<bool>();
     bool listOn;
     float listW, listRoom, colInset;
+    // the crafting menu's own scale (1 unless the category column is taller than the page)
+    readonly Held<Vector3> craftSc = new Held<Vector3>();
+    float craftK = 1f;
+    const float ColFoot = 18f;
     // what of each inventory panel is really drawn (its rect is taller than its slots), in its own space
     readonly Dictionary<RectTransform, Rect> invVis = new Dictionary<RectTransform, Rect>();
     // the recipe card as it is drawn, in its own space
@@ -751,6 +755,13 @@ public class LeatherUI : Mod
             // the category column and the recipe list fill the left page
             float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
             Rect col = Home(craftRef, craftingT as RectTransform);
+            if (!craftSc.has || craftingT.localScale != craftSc.set) { craftSc.orig = craftingT.localScale; craftSc.has = true; }
+            float k0 = Mathf.Abs(craftSc.orig.y) > 0.001f ? craftingT.localScale.y / craftSc.orig.y : 1f;
+            float colH1 = col.height / Mathf.Max(0.01f, k0);
+            float fit = colH1 > 1f ? (content - floor - ColFoot) / colH1 : 1f;
+            craftK = Mathf.Clamp(Mathf.Floor(Mathf.Min(1f, fit) * 50f) / 50f, 0.7f, 1f);
+            craftSc.set = new Vector3(craftSc.orig.x * craftK, craftSc.orig.y * craftK, craftSc.orig.z);
+            if (craftingT.localScale != craftSc.set) { craftingT.localScale = craftSc.set; col = Home(craftRef, craftingT as RectTransform); }
             // the drawn left edge of the category buttons lines up with the page title
             float inset = craftRef.rect.width > 0.01f ? colInset * col.width / craftRef.rect.width : 0f;
             craftShift = new Vector2(Mathf.Round(lx0 - (col.xMin + inset)), Mathf.Round(content - col.yMax));
@@ -758,11 +769,11 @@ public class LeatherUI : Mod
             {
                 Rect lr = Home(listRT, craftingT as RectTransform);
                 float colX0 = lr.xMin + craftShift.x;
-                listW = Mathf.Floor((lx1 - 6f - colX0) / unit);
+                listW = Mathf.Floor((lx1 - 6f - colX0) / (unit * craftK));
                 // the selected recipe sits on the foot of the left page under the list, as wide as the list
                 // column (never smaller than the game draws it); the list scrolls in the room above it
                 float cardRoom = 0f;
-                listRoom = Mathf.Floor((lr.yMax + craftShift.y - floor - cardRoom) / unit);
+                listRoom = Mathf.Floor((lr.yMax + craftShift.y - floor - ColFoot - cardRoom) / (unit * craftK));
                 listOn = listW > 160f && listRoom > ListHead + 60f;
             }
         }
@@ -868,7 +879,7 @@ public class LeatherUI : Mod
             float kx0 = cx + PadIn, kx1 = cx + w * 0.5f - PadOut;
             float ktop = content - PlateGap - CardPad, bot = floor + CardPad;
             float sc = Mathf.Min((kx1 - kx0 - 2f * CardPad) / cw, (ktop - bot) / ch);
-            cardScale = Mathf.Round(Mathf.Clamp(sc, 0.85f, 1.8f) * 20f) / 20f;
+            cardScale = Mathf.Clamp(Mathf.Floor(Mathf.Min(1f, sc) * 20f) / 20f, 0.7f, 1f);
             cardTarget = new Vector2(Mathf.Round((kx0 + kx1) * 0.5f), Mathf.Round(ktop));
         }
         string why = "inv " + R(inv) + " shift " + invShift + " content " + Mathf.Round(content) + " floor " + Mathf.Round(floor)
@@ -1734,7 +1745,7 @@ public class LeatherUI : Mod
     void ViewTick()
     {
         bool craftOk = craftingT.gameObject.activeInHierarchy;
-        if (storeOpen && !storeWas) view = 2;
+        if (storeOpen && (!storeWas || view == 0)) view = 2;
         if (!storeOpen && view == 2) view = 0;
         if (view == 1 && !craftOk) view = storeOpen ? 2 : 0;
         storeWas = storeOpen;
@@ -1743,6 +1754,7 @@ public class LeatherUI : Mod
     void SetView(int v)
     {
         if (v == 2 && !storeOpen) return;
+        if (v == 0 && storeOpen) v = 2;
         if (v == 1 && (craftingT == null || !craftingT.gameObject.activeInHierarchy)) return;
         view = v;
     }
@@ -1836,16 +1848,17 @@ public class LeatherUI : Mod
         if (bookTop.GetSiblingIndex() != canvasT.childCount - 1) bookTop.SetAsLastSibling();
         for (int i = 0; i < 3; i++)
         {
-            bool on = i == 0 || (i == 1 && craftOk) || (i == 2 && storeOpen);
+            bool on = (i == 0 && !storeOpen) || (i == 1 && craftOk) || (i == 2 && storeOpen);
             if (rib[i].gameObject.activeSelf != on) rib[i].gameObject.SetActive(on);
             if (ribHit[i].gameObject.activeSelf != on) ribHit[i].gameObject.SetActive(on);
             if (!on) { ribX[i] = RibbonX; continue; }
             RectTransform hr = ribHit[i].rectTransform;
-            Vector2 hp = new Vector2(Mathf.Round(left + RibbonSel), Mathf.Round(pageTop + RibY(i)));
+            float ry = RibY(i == 2 ? 0 : i);
+            Vector2 hp = new Vector2(Mathf.Round(left + RibbonSel), Mathf.Round(pageTop + ry));
             if (hr.anchoredPosition != hp) hr.anchoredPosition = hp;
             bool hover = i != view && RectTransformUtility.RectangleContainsScreenPoint(hr, Input.mousePosition, cam);
             ribX[i] = Mathf.Lerp(ribX[i], i == view ? RibbonSel : hover ? RibbonX - 12f : RibbonX, k);
-            Vector2 p = new Vector2(Mathf.Round(ribX[i]), RibY(i));
+            Vector2 p = new Vector2(Mathf.Round(ribX[i]), ry);
             if (rib[i].anchoredPosition != p) rib[i].anchoredPosition = p;
             Color col = i == view ? RibCol[i] : Color.Lerp(RibCol[i], Color.black, 0.25f);
             if (ribImg[i].color != col) ribImg[i].color = col;
@@ -2040,6 +2053,8 @@ public class LeatherUI : Mod
         sens.has = false;
         HideItemInfo(false);
         InvTitle(false);
+        if (craftSc.has && craftingT != null && craftingT.localScale == craftSc.set) craftingT.localScale = craftSc.orig;
+        craftSc.has = false; craftK = 1f;
         if (cardHas && cardT != null)
         {
             if (cardT.anchoredPosition == cardPosSet) cardT.anchoredPosition = cardPosOrig;
