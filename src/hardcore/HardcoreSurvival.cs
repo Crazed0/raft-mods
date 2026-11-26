@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.7.1";
+    public const string Version = "2.8.0";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -542,8 +542,7 @@ public class HardcoreSurvival : Mod
                 nextShock = now + 20f;
                 // cold shock when you jump in
                 Emit(st, "eventEmitter_LowBreath");
-                temp = Mathf.Max(0f, temp - 0.02f);
-                HurtFx = Mathf.Max(HurtFx, 0.5f);
+                temp = Mathf.Max(0f, temp - 0.02f / 3f);
                 if (temp < 0.6f) Msg("A ÁGUA ESTÁ GELADA", "Sai da água ou vais arrefecer depressa.", true);
             }
             bool leftWater = wasInWater && !inWater;
@@ -587,6 +586,7 @@ public class HardcoreSurvival : Mod
                 float ins = Mathf.Min(0.92f, inWater ? insul * 0.9f : insul * 1.15f);
                 if (!inWater) rate *= 1f + 0.8f * wet;
                 rate *= 1f - ins * (1f - 0.35f * wet);
+                rate /= 3f; // the body loses heat three times slower
             }
             temp = Mathf.MoveTowards(temp, Mathf.Clamp01(target), rate * dt);
 
@@ -600,7 +600,7 @@ public class HardcoreSurvival : Mod
             if (st != null && freezing)
             {
                 Drain(st.stat_health, 0.15f * dt, 0.1f);
-                if (now >= nextFreezeHurt) { nextFreezeHurt = now + UnityEngine.Random.Range(6f, 10f); Emit(st, "eventEmitter_Damaged"); HurtFx = 1f; BadEvent++; }
+                if (now >= nextFreezeHurt) { nextFreezeHurt = now + UnityEngine.Random.Range(6f, 10f); Emit(st, "eventEmitter_Damaged"); BadEvent++; }
             }
             heatT = 0f; feverLeft = 0f; hotStage = 0;
             // shivering is shown on screen only: the breath sound is the game's drowning cue
@@ -618,9 +618,8 @@ public class HardcoreSurvival : Mod
         bool alive = !dead;
         FatFx = Approach(FatFx, alive ? fat : 0f, 0.5f, 1.5f, dt);
         SickFx = Approach(SickFx, alive && sickLeft > 0f ? 1f : 0f, 0.6f, 0.4f, dt);
-        float coldT = alive && TempOn ? Cold() : 0f;
-        ColdFx = Approach(ColdFx, coldT, 0.4f, 0.3f, dt);
-        FreezeFx = Approach(FreezeFx, alive && freezing ? 1f : 0f, 0.8f, 0.5f, dt);
+        // no screen filters from the cold: the chip by the hotbar says it (HcHud.ColdChip)
+        ColdFx = 0f; FreezeFx = 0f;
         FeverFx = 0f;
         WarmFx = 0f; // no orange "warm" filter by the fire
         VomitFx = Mathf.MoveTowards(VomitFx, 0f, dt / 1.6f);
@@ -1758,6 +1757,103 @@ namespace BCUI_HC
         }
 
         NativeRows nat; float natTry;
+
+        // ---- cold status: a chip right of the hotbar (snowflake + "Com frio" / "A congelar") ----
+        RectTransform chip; Image chipIcon; Text chipText; CanvasGroup chipCg; float chipK; int chipState = -1;
+        static Sprite snow;
+        static readonly Vector3[] hbc = new Vector3[4];
+        Transform hotbar; float hotbarTry;
+
+        static float Seg(float px, float py, float ax, float ay, float bx, float by)
+        {
+            float dx = bx - ax, dy = by - ay;
+            float k = Mathf.Clamp01(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy));
+            float ex = px - ax - dx * k, ey = py - ay - dy * k;
+            return Mathf.Sqrt(ex * ex + ey * ey);
+        }
+
+        // six-armed snowflake with twigs on each arm, white (tinted by the Image)
+        static Sprite Snow()
+        {
+            if (snow != null) return snow;
+            int n = 96; Texture2D t = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            t.wrapMode = TextureWrapMode.Clamp;
+            Color32[] px = new Color32[n * n];
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++)
+                {
+                    float u = (x + 0.5f) / n - 0.5f, v = (y + 0.5f) / n - 0.5f, d = 9f;
+                    for (int i = 0; i < 6; i++)
+                    {
+                        float a = i * Mathf.PI / 3f + Mathf.PI / 2f, ca = Mathf.Cos(a), sa = Mathf.Sin(a);
+                        d = Mathf.Min(d, Seg(u, v, 0f, 0f, ca * 0.42f, sa * 0.42f));
+                        float bx = ca * 0.25f, by = sa * 0.25f;
+                        for (int s2 = -1; s2 <= 1; s2 += 2)
+                        {
+                            float b = a + s2 * 0.75f;
+                            d = Mathf.Min(d, Seg(u, v, bx, by, bx + Mathf.Cos(b) * 0.13f, by + Mathf.Sin(b) * 0.13f));
+                        }
+                    }
+                    float al = Mathf.Clamp01((0.045f - d) * n + 0.5f);
+                    px[y * n + x] = new Color32(255, 255, 255, (byte)(al * 255f));
+                }
+            t.SetPixels32(px); t.Apply();
+            snow = Sprite.Create(t, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), 100f);
+            snow.name = "BC_Snow";
+            return snow;
+        }
+
+        void ColdChip(float temp, bool fire)
+        {
+            if (chip == null)
+            {
+                chip = Kit.Node(transform, "ColdChip");
+                Kit.Place(chip, new Vector2(0.5f, 0f), Kit.ML, new Vector2(520f, 60f), new Vector2(180f, 52f));
+                Kit.Plate(chip);
+                chipIcon = Kit.Img(chip, "Icon", Snow(), Color.white, false);
+                Kit.Place(chipIcon.rectTransform, Kit.ML, Kit.C, new Vector2(30f, 0f), new Vector2(34f, 34f));
+                chipText = Kit.Txt(chip, "Text", "", 24, Kit.Dark, TextAnchor.MiddleLeft, false);
+                Kit.Place(chipText.rectTransform, Kit.ML, Kit.ML, new Vector2(54f, 1f), new Vector2(200f, 40f));
+                chipCg = chip.gameObject.AddComponent<CanvasGroup>();
+                chipCg.blocksRaycasts = false; chipCg.interactable = false;
+            }
+            bool on = HardcoreSurvival.TempOn && temp < 0.35f;
+            int state = !on ? 0 : (temp < 0.1f ? 2 : (fire ? 3 : 1));
+            if (state != chipState)
+            {
+                chipState = state;
+                if (state > 0)
+                {
+                    chipText.text = state == 2 ? "A congelar" : (state == 3 ? "A aquecer" : "Com frio");
+                    chipText.color = state == 2 ? Kit.Bad : Kit.Dark;
+                    chipIcon.color = state == 2 ? new Color(0.2f, 0.42f, 0.7f) : (state == 3 ? new Color(0.75f, 0.42f, 0.12f) : new Color(0.3f, 0.52f, 0.72f));
+                    chip.sizeDelta = new Vector2(Mathf.Round(54f + chipText.preferredWidth + 18f), 52f);
+                }
+            }
+            chipK = Mathf.MoveTowards(chipK, on ? 1f : 0f, Time.unscaledDeltaTime * 4f);
+            chipCg.alpha = chipK;
+            if (chip.gameObject.activeSelf != chipK > 0f) chip.gameObject.SetActive(chipK > 0f);
+            if (chipK <= 0f) return;
+            float pul = state == 2 ? 1f + 0.08f * Mathf.Sin(Time.unscaledTime * 3f) : 1f;
+            chipIcon.rectTransform.localScale = new Vector3(pul, pul, 1f);
+            // right of the hotbar, centred on its height
+            if (hotbar == null && Time.unscaledTime >= hotbarTry)
+            {
+                hotbarTry = Time.unscaledTime + 2f;
+                GameObject cv = GameObject.Find("_CanvasGame_New");
+                hotbar = cv != null ? cv.transform.Find("InventoryParent/Hotbar") : null;
+            }
+            RectTransform hb = hotbar as RectTransform, me = (RectTransform)transform;
+            if (hb != null && hb.gameObject.activeInHierarchy)
+            {
+                hb.GetWorldCorners(hbc);
+                Vector3 r0 = me.InverseTransformPoint(hbc[0]), r2 = me.InverseTransformPoint(hbc[2]);
+                // chip is anchored at the bottom centre of this root
+                float x = Mathf.Max(r0.x, r2.x) + 16f - me.rect.center.x;
+                float y = (r0.y + r2.y) * 0.5f - me.rect.yMin;
+                chip.anchoredPosition = new Vector2(Mathf.Round(x), Mathf.Round(y));
+            }
+        }
         void OnDestroy2() { }
         public void Set(float fatigue, float awake, float temp, float sickLeft, float sickTotal, bool fire)
         {
@@ -1776,6 +1872,8 @@ namespace BCUI_HC
             bool sick = sickLeft > 0f;
             Row(2, sick ? 1f - sickLeft / 200f : 1f, sick ? Kit.Bad : Kit.Good,
                 sick ? (sickLeft > 100f ? "Intoxicado" : "Enjoado") : "Bem", sick ? (sickLeft > 100f ? 2 : 1) : 0, !HardcoreSurvival.RawOn);
+
+            ColdChip(temp, fire);
 
             // panel: slides in when it appears (the bars no longer shake on a bad event)
             float shake = 0f;
