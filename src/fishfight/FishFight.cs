@@ -26,7 +26,7 @@ using RaftModLoader;
 // Console (F10): pesca (status) | pesca on | pesca off (back to the game's one click) | pesca demo
 public class FishFight : Mod
 {
-    public const string Version = "1.4.1";
+    public const string Version = "1.4.2";
     public const string HarmonyId = "com.bestcode.fishfight";
     const string PrefOn = "FishFight.On";
 
@@ -151,6 +151,18 @@ public class FishFight : Mod
     }
 
     // 0 = common, easy fish; 1 = rare, strong fish
+    // the rarity is its own roll: about 70% common, 25% uncommon, 5% rare; a scarcer species and the night
+    // only nudge it (rare tops out near 10% for the scarcest fish, 14% at night)
+    public static float Rarity(float species, bool night)
+    {
+        float p3 = 0.04f + 0.06f * species + (night ? 0.04f : 0f);
+        float p2 = 0.22f + 0.10f * species + (night ? 0.06f : 0f);
+        float r = UnityEngine.Random.value;
+        if (r < p3) return UnityEngine.Random.Range(0.70f, 1f);
+        if (r < p3 + p2) return UnityEngine.Random.Range(0.36f, 0.64f);
+        return UnityEngine.Random.Range(0f, 0.32f);
+    }
+
     public static float Difficulty(float chance) { return Mathf.Clamp01(Mathf.InverseLerp(0.35f, 0.03f, chance)); }
 
     // ---------- the fight ----------
@@ -189,15 +201,14 @@ public class FishFight : Mod
             {
                 // at night the rare ones come up: a few more rolls, keep the rarest
                 float best = Chance(rod, f.fish);
-                for (int i = 0; i < 3; i++)
+                for (int i = 0; i < 1; i++)
                 {
                     Item_Base x = Roll(rod);
                     float c = Chance(rod, x);
                     if (x != null && c < best) { best = c; f.fish = x; }
                 }
             }
-            f.diff = Difficulty(Chance(rod, f.fish));
-            if (f.night) f.diff = Mathf.Clamp01(f.diff + 0.2f);   // and everything pulls harder in the dark
+            f.diff = Rarity(Difficulty(Chance(rod, f.fish)), f.night);
             Vector3 me = rod.personController.transform.position;
             Vector3 b = rod.bobber.transform.position;
             Vector3 flat = b - me; flat.y = 0f;

@@ -2,7 +2,7 @@
   "name": "Fish Fight",
   "author": "BestCode",
   "description": "Catching a fish is a fight on a tight line instead of one click. Hold the button to reel, let go when the fish pulls or the line snaps. Rare fish pull harder. A perfect fight sometimes gives one more fish or a rarer one. Console: pesca, pesca on, pesca off, pesca demo (shows the fight panel and the result cards).",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "license": "MIT",
   "icon": "",
   "banner": "",
