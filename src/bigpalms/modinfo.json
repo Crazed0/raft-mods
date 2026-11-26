@@ -1,8 +1,8 @@
 {
   "name": "Breakable Big Palms",
   "author": "BestCode",
-  "description": "The big island palms become choppable trees (8 axe hits, 3x the drops of a normal palm). Their own hitbox is used and they respawn with the island. Replaces NoMoreUselessPalms.",
-  "version": "1.0.2",
+  "description": "The big island palms become choppable trees (8 axe hits, 1 item per hit, rarely 2). Their own hitbox is used and they respawn with the island. Replaces NoMoreUselessPalms.",
+  "version": "1.1.0",
   "license": "MIT",
   "icon": "",
   "banner": "",

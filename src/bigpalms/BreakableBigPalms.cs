@@ -14,6 +14,7 @@ public class BreakableBigPalms : Mod
     public const string HarmonyId = "com.bestcode.breakablebigpalms";
     public const int YieldMultiplier = 3; // big palm = 3x the drops of a normal palm
     public const int HitsToFell = 8;      // axe hits to fell a big palm (any axe: 1 hit = 1 yield)
+    public const float DoubleChance = 0.08f; // each hit gives 1 of its item; rarely 2 (planks: never more)
     Harmony harmony;
 
     public void Start()
@@ -132,8 +133,15 @@ public class BreakableBigPalms : Mod
         go.SetActive(false); // add everything first, so Awake() runs with the fields set
 
         var yh = go.AddComponent<YieldHandler>();
-        yh.yieldAsset = bigYield;
-        yh.yield = new List<Cost>(bigYield.yieldAssets);
+        // every hit gives a single item, and only now and then two
+        var mine = new List<Cost>();
+        foreach (Cost c in bigYield.yieldAssets)
+            mine.Add(new Cost(c.item, Random.value < DoubleChance ? 2 : 1));
+        SO_ItemYield own = ScriptableObject.CreateInstance<SO_ItemYield>();
+        own.name = "BigPalmYield";
+        own.yieldAssets = mine;
+        yh.yieldAsset = own;
+        yh.yield = new List<Cost>(mine);
 
         RandomDropper dropper = null;
         if (templateDropper != null && templateDropper.randomDropperAsset != null)
