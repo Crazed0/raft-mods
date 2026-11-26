@@ -12,9 +12,11 @@ using RaftModLoader;
 // purifier (on/off, battery, water), cooking pot and juicer (recipe, time, portions), crop plots
 // (growth of each plant) and any tank or battery. It shows by itself in the top left while you look at one.
 // 1.3.0: animals too (shark, boar, screecher, bears, llamas...): aim at one up to 40 m away to see its life.
+// 1.3.1: animals are picked by how close the view passes to their whole body (not by hitting a collider),
+// with a wider margin for the one already shown and a short memory, so a swimming shark no longer flickers.
 public class Inspect : Mod
 {
-    public const string Version = "1.3.0";
+    public const string Version = "1.3.1";
     static bool open;
     static float next;
     static UnityEngine.Object shown;
@@ -31,7 +33,7 @@ public class Inspect : Mod
         try { me = RAPI.GetLocalPlayer(); } catch { }
         if (menu || me == null) { BCUI_IN.InspectHud.Hide(); return; }
         if (Time.unscaledTime < next) return;
-        next = Time.unscaledTime + 0.25f;
+        next = Time.unscaledTime + 0.12f;
         Network_Entity beast = null;
         Block b = Look(out beast);
         if (b == null && beast == null) { shown = null; BCUI_IN.InspectHud.Hide(); return; }
@@ -80,23 +82,104 @@ public class Inspect : Mod
         return null;
     }
 
-    // the nearest animal along the view (a slightly fat ray, they move), unless a wall or the floor is in front of it
+    // Every animal in the world, refreshed once a second: its entity, the object that holds its whole
+    // body and the meshes drawn for it (their bounds follow the animation, colliders often cover only a part).
+    class Beast { public Network_Entity e; public Transform root; public Renderer[] rs; }
+    static readonly List<Beast> beasts = new List<Beast>();
+    static float scanAt;
+    static Network_Entity held;
+    static float heldUntil;
+
+    static void ScanBeasts()
+    {
+        if (Time.unscaledTime < scanAt) return;
+        scanAt = Time.unscaledTime + 1f;
+        beasts.Clear();
+        foreach (AI_NetworkBehaviour ai in UnityEngine.Object.FindObjectsOfType<AI_NetworkBehaviour>())
+        {
+            if (ai == null) continue;
+            Network_Entity e = ai.networkEntity;
+            if (e == null) e = ai.GetComponentInChildren<Network_Entity>();
+            if (e == null) e = ai.GetComponentInParent<Network_Entity>();
+            if (e == null || e.stat_health == null || e.entityType == EntityType.Player || e.GetComponentInParent<Network_Player>() != null) continue;
+            bool dup = false;
+            foreach (Beast x in beasts) if (x.e == e) { dup = true; break; }
+            if (dup) continue;
+            Beast n = new Beast();
+            n.e = e;
+            n.root = e.transform.IsChildOf(ai.transform) ? ai.transform : e.transform;
+            List<Renderer> rs = new List<Renderer>();
+            foreach (Renderer r in n.root.GetComponentsInChildren<Renderer>(true))
+                if (r is SkinnedMeshRenderer || r is MeshRenderer) rs.Add(r);
+            n.rs = rs.ToArray();
+            beasts.Add(n);
+        }
+    }
+
+    static Bounds BodyOf(Beast x)
+    {
+        Bounds b = new Bounds();
+        bool any = false;
+        foreach (Renderer r in x.rs)
+        {
+            if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
+            Bounds rb = r.bounds;
+            if (rb.size.sqrMagnitude > 400f) continue;   // a stray huge mesh (an effect) would swallow the view
+            if (!any) { b = rb; any = true; } else b.Encapsulate(rb);
+        }
+        if (!any) b = new Bounds(x.e.transform.position, Vector3.one * 1.2f);
+        return b;
+    }
+
+    // true when some part of the body can be seen: nothing solid (the raft, an island, a wall) in front of it
+    static bool Seen(Vector3 o, Beast x, Vector3 p)
+    {
+        Vector3 v = p - o;
+        float dist = v.magnitude;
+        if (dist < 0.2f) return true;
+        foreach (RaycastHit h in Physics.RaycastAll(o, v / dist, dist - 0.15f, ~0, QueryTriggerInteraction.Ignore))
+        {
+            Transform t = h.collider.transform;
+            if (t.IsChildOf(x.root)) continue;
+            if (h.collider.GetComponentInParent<Network_Player>() != null || h.collider.GetComponentInParent<Network_Entity>() != null) continue;
+            if (h.collider.attachedRigidbody != null && !h.collider.attachedRigidbody.isKinematic) continue;   // floating debris, items
+            return false;
+        }
+        return true;
+    }
+
+    // The animal the view passes closest to (relative to a margin that grows with distance), if it can be seen.
+    // The one already shown gets twice the margin and stays for a moment after the view slips off it.
     static Network_Entity LookBeast(Vector3 o, Vector3 d)
     {
-        RaycastHit[] hits = Physics.SphereCastAll(o, 0.35f, d, BeastRange, ~0, QueryTriggerInteraction.Collide);
-        Array.Sort(hits, (x, y) => x.distance.CompareTo(y.distance));
-        float wall = BeastRange + 1f;
-        foreach (RaycastHit h in Physics.RaycastAll(o, d, BeastRange, ~0, QueryTriggerInteraction.Ignore))
-            if (h.distance < wall && h.collider.GetComponentInParent<Network_Entity>() == null && h.collider.GetComponentInParent<Network_Player>() == null) wall = h.distance;
-        foreach (RaycastHit h in hits)
+        ScanBeasts();
+        Network_Entity best = null;
+        float bestScore = float.MaxValue;
+        foreach (Beast x in beasts)
         {
-            Collider c = h.collider;
-            if (c == null || c.GetComponentInParent<Network_Player>() != null) continue;
-            if (h.distance > wall) break;   // a solid thing in the way (the raft, an island, a wall) hides what is behind it
-            Network_Entity e = c.GetComponentInParent<Network_Entity>();
-            if (e != null && e.stat_health != null && e.entityType != EntityType.Player && e.GetComponentInParent<Network_Player>() == null
-                && (c.GetComponentInParent<AI_NetworkBehaviour>() != null || e.GetComponentInChildren<AI_NetworkBehaviour>() != null)) return e;
+            if (x.e == null || x.root == null || !x.root.gameObject.activeInHierarchy) continue;
+            Bounds b = BodyOf(x);
+            float tc = Vector3.Dot(b.center - o, d), ext = b.extents.magnitude;
+            if (tc + ext < 0.3f || tc - ext > BeastRange) continue;
+            float miss = float.MaxValue, at = tc;
+            for (int i = -3; i <= 3; i++)
+            {
+                float t = Mathf.Clamp(tc + ext * i / 3f, 0.3f, BeastRange);
+                float m = b.SqrDistance(o + d * t);
+                if (m < miss) { miss = m; at = t; }
+            }
+            miss = Mathf.Sqrt(miss);
+            bool keep = x.e == held;
+            float tol = (0.35f + 0.03f * at) * (keep ? 2f : 1f);
+            if (miss > tol) continue;
+            Vector3 q = b.ClosestPoint(o + d * at);
+            if (!Seen(o, x, q) && !Seen(o, x, b.center)) continue;
+            float score = miss / tol + at * 0.005f - (keep ? 0.3f : 0f);
+            if (score < bestScore) { bestScore = score; best = x.e; }
         }
+        if (best != null) { held = best; heldUntil = Time.unscaledTime + 0.6f; return best; }
+        if (held != null && Time.unscaledTime < heldUntil) return held;
+        held = null;
         return null;
     }
 
