@@ -13,7 +13,7 @@ using BCUI_LU;
 // memory. Unloading the mod puts every original sprite back.
 public class LeatherUI : Mod
 {
-    public const string Version = "2.0.0";
+    public const string Version = "2.1.0";
 
     readonly Dictionary<Sprite, Sprite> map = new Dictionary<Sprite, Sprite>();   // game sprite -> ours
     readonly Dictionary<Sprite, Sprite> back = new Dictionary<Sprite, Sprite>();  // ours -> game sprite
@@ -463,7 +463,7 @@ public class LeatherUI : Mod
             if (want)
             {
                 if (!EnsureBook()) return;
-                if (!bookShown) { book.SetActive(true); if (bookTop != null) bookTop.gameObject.SetActive(true); bookShown = true; nextScan = 0f; }
+                if (!bookShown) { book.SetActive(true); if (bookTop != null) bookTop.gameObject.SetActive(true); bookShown = true; nextScan = 0f; view = 0; storeWas = false; headView = -1; }
                 Keep();
             }
             else if (bookShown) HideBook();
@@ -592,9 +592,13 @@ public class LeatherUI : Mod
             -M - 32f, -M - 52f, -M - 32f, -M - 12f);
 
         // bookmarks tucked under the cover, as in the logbook: the open section's one stands out
-        ribFab = Ribbon(pages, "TabFabrico", "FABRICO", new Color(0.56f, 0.19f, 0.13f), -128f);
-        ribChest = Ribbon(pages, "TabBau", "BAÚ", new Color(0.15f, 0.40f, 0.40f), -196f);
-        ribFabX = ribChestX = RibbonX;
+        string[] rn = { "MOCHILA", "FABRICO", "BAÚ" };
+        for (int i = 0; i < 3; i++)
+        {
+            rib[i] = Ribbon(pages, "Tab" + i, rn[i], RibCol[i], RibY(i));
+            ribImg[i] = rib[i].GetComponent<Image>();
+            ribX[i] = RibbonX;
+        }
 
         // leather cover with stitching
         Span(Pic(pages, "Cover", Art("Round"), Leather, Image.Type.Sliced).rectTransform, Z, O, -M, -M, -M, -M);
@@ -627,12 +631,23 @@ public class LeatherUI : Mod
         Place(leftFolio.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f), new Vector2((PadOut - PadIn) * 0.5f, 26f), new Vector2(320f, 30f));
         rightFolio = Label(right, "Folio", "", 18, A(Brown, 0.6f), TextAnchor.MiddleCenter);
         Place(rightFolio.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0.5f), new Vector2((PadIn - PadOut) * 0.5f, 26f), new Vector2(320f, 30f));
+        craftHint = Label(right, "Empty", "Escolhe uma receita na página da esquerda.", 22, A(Brown, 0.6f), TextAnchor.MiddleCenter);
+        Place(craftHint.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2((PadIn - PadOut) * 0.5f, -20f), new Vector2(460f, 60f));
+        craftHint.gameObject.SetActive(false);
 
         // the leather-bound cards behind the inventory and the chest (over the pages, under the game's panels)
         RectTransform plates = Node(bookRoot, "Plates");
         Span(plates, Z, O, 0f, 0f, 0f, 0f);
         invPlate = MakePlate(plates, "InvPlate", "MOCHILA");
         chestPlate = MakePlate(plates, "ChestPlate", null);
+        // the item under the mouse, on the right page while the backpack is open
+        infoPlate = MakePlate(plates, "InfoPlate", "DETALHES");
+        infoIcon = Pic(infoPlate.rt, "Icon", null, Color.white, Image.Type.Simple);
+        infoIcon.preserveAspect = true;
+        infoDesc = Label(infoPlate.rt, "Desc", "", 22, Brown, TextAnchor.UpperCenter);
+        infoDesc.horizontalOverflow = HorizontalWrapMode.Wrap; infoDesc.verticalOverflow = VerticalWrapMode.Truncate;
+        // the selected recipe's card on the right page while crafting
+        craftPlate = MakePlate(plates, "CraftPlate", null);
 
         // key hints under the book, like the logbook's
         hints = Node(bookRoot, "Hints");
@@ -717,7 +732,7 @@ public class LeatherUI : Mod
         float w = Mathf.Round(Mathf.Min(r.width - 2f * (56f + M), BookW));
         float h = Mathf.Round(Mathf.Min(BookH, Mathf.Max(420f, top - bottom)));
         float cy = Mathf.Round((top + bottom) * 0.5f);
-        bookCx = r.center.x; bookW = w; pageBottom = cy - h * 0.5f;
+        bookCx = r.center.x; bookW = w; pageBottom = cy - h * 0.5f; pageTop = cy + h * 0.5f;
         hintY = Mathf.Round(pageBottom - M - 8f - 17f);
         hintsOn = hintY - 17f > hotTop + 6f;
         if (pages.sizeDelta != new Vector2(w, h)) pages.sizeDelta = new Vector2(w, h);
@@ -733,8 +748,8 @@ public class LeatherUI : Mod
         listOn = false;
         if (craftRef != null)
         {
-            // the category column and recipe list live on the right page
-            float lx0 = cx + PadIn, lx1 = cx + w * 0.5f - PadOut;
+            // the category column and the recipe list fill the left page
+            float lx0 = cx - w * 0.5f + PadOut, lx1 = cx - PadIn;
             Rect col = Home(craftRef, craftingT as RectTransform);
             // the drawn left edge of the category buttons lines up with the page title
             float inset = craftRef.rect.width > 0.01f ? colInset * col.width / craftRef.rect.width : 0f;
@@ -808,7 +823,7 @@ public class LeatherUI : Mod
         // slots at the same height, each on a leather-bound card like the ones in the skills book (K)
         Rect ib = invT != null ? invHome : inv;
         plateHead = PlateHead;
-        if (storeOpen && storeT != null && storeT == lastStoreT) plateHead = Mathf.Clamp(chestDrop + 18f, PlateHead, 140f);
+        if (view == 2 && storeOpen && storeT != null && storeT == lastStoreT) plateHead = Mathf.Clamp(chestDrop + 18f, PlateHead, 140f);
         float T = content - PlateGap - plateHead;
         float lc = cx - w * 0.25f + (PadOut - PadIn) * 0.5f, rc = cx + w * 0.25f - (PadOut - PadIn) * 0.5f;
         Rect sl;
@@ -841,22 +856,20 @@ public class LeatherUI : Mod
             storeShift = new Vector2(Mathf.Round(tx), Mathf.Round(ty));
         }
         invShift = new Vector2(Mathf.Round(sx), Mathf.Round(sy));
-        if (cardOn && !storeOpen)
+        if (cardOn)
         {
             Rect cv = cardVisHas ? cardVis : cardT.rect;
             float kNow = Mathf.Abs(bookRoot.InverseTransformVector(cardT.TransformVector(Vector3.up)).y);
             float k1 = cardHas && Mathf.Abs(cardT.localScale.y) > 0.001f ? kNow * cardScaleOrig.y / cardT.localScale.y : kNow;
             if (k1 < 0.01f) k1 = unit;
             float cw = Mathf.Max(1f, cv.width * k1), ch = Mathf.Max(1f, cv.height * k1);
-            // the selected recipe stands at the foot of the right page, under the recipe list, which pages
-            // through the room left above it (never less than a few rows)
-            float lx0 = cx + PadIn, lx1 = cx + w * 0.5f - PadOut;
-            float room = listOn ? (listRoom - ListHead) * unit - ListMin - 16f : content - floor;
-            float sc = Mathf.Min(1f, Mathf.Min((lx1 - lx0) / cw, room / ch));
-            cardScale = Mathf.Round(Mathf.Clamp(sc, 0.85f, 1f) * 20f) / 20f;
-            float cardH = ch * cardScale;
-            if (listOn) listRoom = Mathf.Max(ListHead + 60f, listRoom - Mathf.Floor((cardH + 16f) / unit));
-            cardTarget = new Vector2(Mathf.Round(lx1 - 6f - cw * cardScale * 0.5f), Mathf.Round(floor + cardH));
+            // the selected recipe has the right page to itself: on a card, under the page's header, as
+            // large as the page allows
+            float kx0 = cx + PadIn, kx1 = cx + w * 0.5f - PadOut;
+            float ktop = content - PlateGap - CardPad, bot = floor + CardPad;
+            float sc = Mathf.Min((kx1 - kx0 - 2f * CardPad) / cw, (ktop - bot) / ch);
+            cardScale = Mathf.Round(Mathf.Clamp(sc, 0.85f, 1.8f) * 20f) / 20f;
+            cardTarget = new Vector2(Mathf.Round((kx0 + kx1) * 0.5f), Mathf.Round(ktop));
         }
         string why = "inv " + R(inv) + " shift " + invShift + " content " + Mathf.Round(content) + " floor " + Mathf.Round(floor)
             + " card x" + cardScale + (cardVisHas ? " vis " + R(cardVis) : "") + " | " + invWhy + " | parts" + parts + " | card bottom=" + cardWhy + " cardRect " + (cardT != null ? R(cardT.rect) : "");
@@ -1070,7 +1083,7 @@ public class LeatherUI : Mod
         RectTransform rows = menu != null ? menu.menuItemSortParent : null;
         RectTransform view = menu != null ? menu.scrollViewRect : null;
         pageStarts.Clear(); pageLimit = 0f;
-        if (!listOn || rows == null || view == null) { UnwrapAll(); return; }
+        if (!listOn || rows == null || view == null) { UnwrapAll(); UnclipAll(); return; }
         RectTransform port = rows.parent as RectTransform;
         float inset = port != null ? Mathf.Max(0f, view.rect.width - port.rect.width) : 0f;
         // room for a row: the list's width less the viewport's inset and the scrollbar
@@ -1099,7 +1112,12 @@ public class LeatherUI : Mod
                 sr.vertical = need;
                 if (!need) sr.verticalNormalizedPosition = 1f;
             }
-            if (need) Paginate(rows, sr, contentH, viewH);
+            if (!sens.has) { sens.orig = sr.scrollSensitivity; sens.has = true; }
+            if (sr.scrollSensitivity != 0f) sr.scrollSensitivity = 0f;
+            float portH = port != null && port.rect.height > 1f ? port.rect.height : viewH;
+            if (need) Paginate(rows, sr, contentH, portH);
+            if (need) Clip(rows, (1f - sr.verticalNormalizedPosition) * Mathf.Max(0f, contentH - portH), portH);
+            else UnclipAll();
         }
     }
 
@@ -1136,7 +1154,7 @@ public class LeatherUI : Mod
     void Flip(int d)
     {
         ScrollRect sr = menu != null ? menu.scrollRect : null;
-        if (sr == null || storeOpen || pageStarts.Count < 2 || pageLimit < 1f) return;
+        if (sr == null || view != 1 || pageStarts.Count < 2 || pageLimit < 1f) return;
         int p = Mathf.Clamp(curPage + d, 0, pageStarts.Count - 1);
         if (p == curPage) return;
         sr.StopMovement();
@@ -1381,7 +1399,14 @@ public class LeatherUI : Mod
         float now = Time.unscaledTime;
         if (now >= nextScan) { nextScan = now + 0.5f; Scan(); MeasureInv(); }
         Layout();
-        HideCrafting(storeOpen);
+        ViewTick();
+        HideCrafting(view != 1);
+        foreach (Transform c in invParentT)
+        {
+            if (!Movable(c)) continue;
+            RectTransform rt = (RectTransform)c;
+            Veil(rt, rt.name.Contains("Storage") ? view != 2 : view == 1);
+        }
         HideItemInfo(true);
         InvTitle(true);
 
@@ -1397,11 +1422,11 @@ public class LeatherUI : Mod
             h.set = want;
             if (cur != want) rt.anchoredPosition = want;
         }
+        Keys();
         FitList();
         PlaceCard();
         Plates();
         Chrome();
-        Keys();
         foreach (KeyValuePair<Image, Held<Color>> kv in hidden)
         {
             Image img = kv.Key; Held<Color> h = kv.Value;
@@ -1444,8 +1469,6 @@ public class LeatherUI : Mod
         craftCG.interactable = !hide;
         craftCG.blocksRaycasts = !hide;
         craftHid = hide;
-        if (rightTitle != null) rightTitle.text = hide ? "BAÚ" : "FABRICO";
-        if (rightSub != null) rightSub.text = hide ? "Arrumação e mantimentos" : "Receitas e materiais";
     }
     Text leftTitle, leftSub, rightTitle, rightSub;
     RectTransform invT, storeT;
@@ -1455,8 +1478,23 @@ public class LeatherUI : Mod
     const float BookW = 1240f, BookH = 800f, RibbonX = -172f, RibbonSel = -198f;
     // a card's header above the slots, and its distance from the page header's rule
     const float PlateHead = 76f, PlateGap = 22f, PlatePad = 16f, ListMin = 250f;
-    RectTransform bookTop, hints, ribFab, ribChest;
-    float ribFabX, ribChestX;
+    RectTransform bookTop, hints;
+    // the bookmarks: 0 backpack, 1 crafting, 2 chest; the open one is the view
+    static readonly Color[] RibCol = { new Color(0.66f, 0.46f, 0.13f), new Color(0.56f, 0.19f, 0.13f), new Color(0.15f, 0.40f, 0.40f) };
+    static float RibY(int i) { return -128f - 68f * i; }
+    readonly RectTransform[] rib = new RectTransform[3];
+    readonly Image[] ribImg = new Image[3], ribHit = new Image[3];
+    readonly float[] ribX = new float[3];
+    int view, headView = -1;
+    bool storeWas;
+    const float CardPad = 22f;
+    Text craftHint, infoDesc;
+    Image infoIcon;
+    Plate infoPlate, craftPlate;
+    string infoKey = "";
+    PlayerInventory piC;
+    float pageTop;
+    readonly Held<float> sens = new Held<float>();
     Text leftFolio, rightFolio;
     Button prevBtn, nextBtn;
     readonly RectTransform[] hintChip = new RectTransform[3];
@@ -1473,6 +1511,7 @@ public class LeatherUI : Mod
         public Text title;
         public Vector2 size;
         public float head;
+        public string laid;
     }
     Plate invPlate, chestPlate;
 
@@ -1520,12 +1559,17 @@ public class LeatherUI : Mod
     // the card spans the slots (book units) with a margin around them and its header above
     void SetPlate(Plate p, Rect slots, float head)
     {
-        Rect r = Rect.MinMaxRect(slots.xMin - PlatePad, slots.yMin - PlatePad, slots.xMax + PlatePad, slots.yMax + head);
+        PlateAt(p, Rect.MinMaxRect(slots.xMin - PlatePad, slots.yMin - PlatePad, slots.xMax + PlatePad, slots.yMax + head), head);
+    }
+
+    void PlateAt(Plate p, Rect r, float head)
+    {
         Vector2 pos = new Vector2(Mathf.Round(r.center.x), Mathf.Round(r.center.y));
         Vector2 size = new Vector2(Mathf.Round(r.width), Mathf.Round(r.height));
         if (p.rt.anchoredPosition != pos) p.rt.anchoredPosition = pos;
-        if (p.size == size && p.head == head) return;
+        if (p.size == size && p.head == head && (p.title == null || p.laid == p.title.text)) return;
         p.size = size; p.head = head;
+        if (p.title != null) p.laid = p.title.text;
         p.rt.sizeDelta = size;
         if (p.title == null) return;
         Vector2 T = new Vector2(0.5f, 1f), C = new Vector2(0.5f, 0.5f);
@@ -1534,6 +1578,9 @@ public class LeatherUI : Mod
         Band(p.thin, 14f, 14f, ry - 5f, 1f);
         float ty = Mathf.Round(ry * 0.5f) - 1f;
         Place(p.title.rectTransform, T, C, new Vector2(0f, ty), new Vector2(Mathf.Max(40f, size.x - 40f), 40f));
+        p.title.fontSize = 30;
+        float maxW = size.x - 110f;
+        if (p.title.preferredWidth > maxW) p.title.fontSize = Mathf.Max(18, Mathf.FloorToInt(30f * maxW / p.title.preferredWidth));
         float tw = Mathf.Round(p.title.preferredWidth * 0.5f + 22f);
         float rw = Mathf.Max(0f, size.x * 0.5f - tw - 16f - 22f);
         Place(p.dl, T, C, new Vector2(-tw, ty - 1f), new Vector2(10f, 10f));
@@ -1612,7 +1659,7 @@ public class LeatherUI : Mod
     {
         if (invT != lastInvT || (storeOpen ? storeT : null) != lastStoreT || Time.unscaledTime >= slotsAt) RefreshSlots();
         Rect a = new Rect();
-        bool invOn = invT != null && SlotBox(invSlots, null, out a);
+        bool invOn = view != 1 && invT != null && SlotBox(invSlots, null, out a);
         if (invOn)
         {
             // whatever the inventory draws under its slots goes on the card too
@@ -1621,36 +1668,201 @@ public class LeatherUI : Mod
         }
         Show(invPlate, invOn);
         Rect c = new Rect();
-        bool chestOn = storeOpen && storeT != null && SlotBox(storeSlots, null, out c);
+        bool chestOn = view == 2 && storeOpen && storeT != null && SlotBox(storeSlots, null, out c);
         if (chestOn) SetPlate(chestPlate, c, plateHead);
         Show(chestPlate, chestOn);
-        leftFolio.text = invOn ? Used(invSlots) : "";
-        if (chestOn) rightFolio.text = Used(storeSlots);
-        else if (listOn) rightFolio.text = pageStarts.Count > 1 ? (curPage + 1) + " / " + pageStarts.Count : "1 / 1";
-        else rightFolio.text = "";
+        bool infoOn = view == 0 && invOn;
+        if (infoOn) Info(a);
+        Show(infoPlate, infoOn);
+        bool cardPl = view == 1 && cardOn && cardT != null;
+        if (cardPl)
+        {
+            Rect b = Bounds(cardT, bookRoot);
+            if (cardVisHas) b = Part(b, cardT.rect, cardVis);
+            PlateAt(craftPlate, Rect.MinMaxRect(b.xMin - CardPad, b.yMin - CardPad, b.xMax + CardPad, b.yMax + CardPad), CardPad);
+        }
+        Show(craftPlate, cardPl);
+        string lf = "", rf = "";
+        if (view == 1) { if (pageStarts.Count > 1) lf = "-  " + (curPage + 1) + " / " + pageStarts.Count + "  -"; }
+        else if (invOn) lf = Used(invSlots);
+        if (chestOn) rf = Used(storeSlots);
+        if (leftFolio.text != lf) leftFolio.text = lf;
+        if (rightFolio.text != rf) rightFolio.text = rf;
+    }
+
+    PlayerInventory Pi()
+    {
+        if (piC == null)
+            try { Network_Player me = RAPI.GetLocalPlayer(); if (me != null) piC = me.Inventory; } catch (Exception) { }
+        return piC;
+    }
+
+    // the right page of the backpack: the item under the mouse (what the game shows above the inventory),
+    // on a card as tall as the inventory's
+    void Info(Rect slots)
+    {
+        string nm = "", ds = "";
+        Sprite sp = null;
+        PlayerInventory pi = Pi();
+        if (pi != null)
+        {
+            if (pi.itemNameText != null) nm = pi.itemNameText.text;
+            if (pi.itemDescriptionText != null) ds = pi.itemDescriptionText.text;
+            if (pi.itemImage != null && pi.itemImage.enabled) sp = pi.itemImage.sprite;
+        }
+        bool has = !string.IsNullOrEmpty(nm) && nm.Trim().Length > 0;
+        string title = has ? nm.Trim().ToUpper() : "DETALHES";
+        if (infoPlate.title.text != title) infoPlate.title.text = title;
+        float half = Mathf.Min(bookW * 0.5f - PadIn - PadOut, 460f) * 0.5f;
+        float rc = bookCx + bookW * 0.25f - (PadOut - PadIn) * 0.5f;
+        PlateAt(infoPlate, Rect.MinMaxRect(rc - half, slots.yMin - PlatePad, rc + half, slots.yMax + plateHead), plateHead);
+        bool icon = has && sp != null;
+        if (infoIcon.sprite != sp) infoIcon.sprite = sp;
+        if (infoIcon.gameObject.activeSelf != icon) infoIcon.gameObject.SetActive(icon);
+        string txt = has ? ds : "Passa o rato por cima de um item da mochila para o veres aqui.";
+        if (infoDesc.text != txt) infoDesc.text = txt;
+        string key = plateHead + (icon ? "i" : "") + (has ? "h" : "");
+        if (key == infoKey) return;
+        infoKey = key;
+        Vector2 Z = Vector2.zero, O = Vector2.one;
+        Place(infoIcon.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -(plateHead + 16f)), new Vector2(120f, 120f));
+        infoDesc.alignment = has ? TextAnchor.UpperCenter : TextAnchor.MiddleCenter;
+        infoDesc.color = has ? Brown : A(Brown, 0.6f);
+        Span(infoDesc.rectTransform, Z, O, 30f, 20f, 30f, plateHead + (icon ? 156f : 16f));
+    }
+
+    void ViewTick()
+    {
+        bool craftOk = craftingT.gameObject.activeInHierarchy;
+        if (storeOpen && !storeWas) view = 2;
+        if (!storeOpen && view == 2) view = 0;
+        if (view == 1 && !craftOk) view = storeOpen ? 2 : 0;
+        storeWas = storeOpen;
+    }
+
+    void SetView(int v)
+    {
+        if (v == 2 && !storeOpen) return;
+        if (v == 1 && (craftingT == null || !craftingT.gameObject.activeInHierarchy)) return;
+        view = v;
+    }
+
+    void Heads()
+    {
+        string lt = "INVENTÁRIO", ls = "Mochila e arrumação", rt = "DETALHES", rs = "O item debaixo do rato";
+        if (view == 1) { lt = "RECEITAS"; ls = "Escolhe a categoria e a receita"; rt = "FABRICO"; rs = "Materiais e construção"; }
+        else if (view == 2) { rt = "BAÚ"; rs = "Arrumação e mantimentos"; }
+        leftTitle.text = lt; leftSub.text = ls; rightTitle.text = rt; rightSub.text = rs;
+    }
+
+    Camera UiCam()
+    {
+        Canvas c = canvasT != null ? canvasT.GetComponent<Canvas>() : null;
+        return c == null || c.renderMode == RenderMode.ScreenSpaceOverlay ? null : c.worldCamera;
+    }
+
+    // panels put away for the open view (the inventory while crafting, the chest outside its view)
+    class Veiled { public CanvasGroup cg; public float a; public bool inter, block; }
+    readonly Dictionary<RectTransform, Veiled> veils = new Dictionary<RectTransform, Veiled>();
+    void Veil(RectTransform rt, bool hide)
+    {
+        Veiled v;
+        if (!veils.TryGetValue(rt, out v) || v.cg == null)
+        {
+            if (!hide) return;
+            v = new Veiled();
+            v.cg = rt.GetComponent<CanvasGroup>();
+            if (v.cg == null) v.cg = rt.gameObject.AddComponent<CanvasGroup>();
+            v.a = v.cg.alpha; v.inter = v.cg.interactable; v.block = v.cg.blocksRaycasts;
+            veils[rt] = v;
+        }
+        if (hide)
+        {
+            if (v.cg.alpha != 0f || v.cg.blocksRaycasts) { v.cg.alpha = 0f; v.cg.interactable = false; v.cg.blocksRaycasts = false; }
+        }
+        else
+        {
+            v.cg.alpha = v.a; v.cg.interactable = v.inter; v.cg.blocksRaycasts = v.block;
+            veils.Remove(rt);
+        }
+    }
+
+    void Unveil()
+    {
+        foreach (KeyValuePair<RectTransform, Veiled> kv in veils)
+            if (kv.Value.cg != null) { kv.Value.cg.alpha = kv.Value.a; kv.Value.cg.interactable = kv.Value.inter; kv.Value.cg.blocksRaycasts = kv.Value.block; }
+        veils.Clear();
+    }
+
+    // only the rows that fit whole on the open page are shown
+    readonly Dictionary<RectTransform, CanvasGroup> rowCg = new Dictionary<RectTransform, CanvasGroup>();
+    void Clip(RectTransform rows, float off, float viewH)
+    {
+        float top = rows.rect.yMax;
+        foreach (Transform t in rows)
+        {
+            RectTransform row = t as RectTransform;
+            if (row == null || !row.gameObject.activeSelf) continue;
+            Rect b = Bounds(row, rows);
+            float y0 = top - b.yMax, y1 = top - b.yMin;
+            bool on = y0 >= off - 0.5f && (y1 <= off + viewH + 0.5f || (y1 - y0 > viewH && y0 < off + viewH));
+            CanvasGroup cg;
+            if (!rowCg.TryGetValue(row, out cg) || cg == null)
+            {
+                if (on) continue;
+                cg = row.GetComponent<CanvasGroup>();
+                if (cg == null) cg = row.gameObject.AddComponent<CanvasGroup>();
+                rowCg[row] = cg;
+            }
+            float al = on ? 1f : 0f;
+            if (cg.alpha != al) { cg.alpha = al; cg.blocksRaycasts = on; cg.interactable = on; }
+        }
+    }
+
+    void UnclipAll()
+    {
+        foreach (KeyValuePair<RectTransform, CanvasGroup> kv in rowCg)
+            if (kv.Value != null) { kv.Value.alpha = 1f; kv.Value.blocksRaycasts = true; kv.Value.interactable = true; }
+        rowCg.Clear();
     }
 
     // bookmarks, page arrows and key hints
     void Chrome()
     {
-        bool craft = !storeOpen && listOn && craftingT.gameObject.activeInHierarchy;
+        Camera cam = UiCam();
         float k = 1f - Mathf.Exp(-16f * Time.unscaledDeltaTime);
-        ribFabX = Mathf.Lerp(ribFabX, craft ? RibbonSel : RibbonX, k);
-        ribChestX = Mathf.Lerp(ribChestX, storeOpen ? RibbonSel : RibbonX, k);
-        Vector2 pf = new Vector2(Mathf.Round(ribFabX), ribFab.anchoredPosition.y), pc = new Vector2(Mathf.Round(ribChestX), ribChest.anchoredPosition.y);
-        if (ribFab.anchoredPosition != pf) ribFab.anchoredPosition = pf;
-        if (ribChest.anchoredPosition != pc) ribChest.anchoredPosition = pc;
-
+        float left = bookCx - bookW * 0.5f;
+        bool craftOk = craftingT.gameObject.activeInHierarchy;
         if (bookTop.GetSiblingIndex() != canvasT.childCount - 1) bookTop.SetAsLastSibling();
-        bool paged = craft && pageStarts.Count > 1;
-        float fx = bookCx + bookW * 0.25f - (PadOut - PadIn) * 0.5f, fy = Mathf.Round(pageBottom + 26f);
+        for (int i = 0; i < 3; i++)
+        {
+            bool on = i == 0 || (i == 1 && craftOk) || (i == 2 && storeOpen);
+            if (rib[i].gameObject.activeSelf != on) rib[i].gameObject.SetActive(on);
+            if (ribHit[i].gameObject.activeSelf != on) ribHit[i].gameObject.SetActive(on);
+            if (!on) { ribX[i] = RibbonX; continue; }
+            RectTransform hr = ribHit[i].rectTransform;
+            Vector2 hp = new Vector2(Mathf.Round(left + RibbonSel), Mathf.Round(pageTop + RibY(i)));
+            if (hr.anchoredPosition != hp) hr.anchoredPosition = hp;
+            bool hover = i != view && RectTransformUtility.RectangleContainsScreenPoint(hr, Input.mousePosition, cam);
+            ribX[i] = Mathf.Lerp(ribX[i], i == view ? RibbonSel : hover ? RibbonX - 12f : RibbonX, k);
+            Vector2 p = new Vector2(Mathf.Round(ribX[i]), RibY(i));
+            if (rib[i].anchoredPosition != p) rib[i].anchoredPosition = p;
+            Color col = i == view ? RibCol[i] : Color.Lerp(RibCol[i], Color.black, 0.25f);
+            if (ribImg[i].color != col) ribImg[i].color = col;
+        }
+        if (view != headView) { headView = view; Heads(); }
+
+        bool paged = view == 1 && pageStarts.Count > 1;
+        float fx = bookCx - bookW * 0.25f + (PadOut - PadIn) * 0.5f, fy = Mathf.Round(pageBottom + 26f);
         Arrow(prevBtn, paged, curPage > 0, new Vector2(Mathf.Round(fx - 96f), fy));
         Arrow(nextBtn, paged, curPage < pageStarts.Count - 1, new Vector2(Mathf.Round(fx + 96f), fy));
+        bool empty = view == 1 && !cardOn;
+        if (craftHint.gameObject.activeSelf != empty) craftHint.gameObject.SetActive(empty);
 
         if (hints.gameObject.activeSelf != hintsOn) hints.gameObject.SetActive(hintsOn);
-        Vector2 hp = new Vector2(Mathf.Round(bookCx), hintY);
-        if (hints.anchoredPosition != hp) hints.anchoredPosition = hp;
-        int mask = 1 | (paged ? 2 : 0) | (storeOpen ? 4 : 0);
+        Vector2 hpos = new Vector2(Mathf.Round(bookCx), hintY);
+        if (hints.anchoredPosition != hpos) hints.anchoredPosition = hpos;
+        int mask = 1 | (paged ? 2 : 0) | (view != 1 ? 4 : 0);
         if (mask != hintMask) { hintMask = mask; HintLayout(mask); }
     }
 
@@ -1688,16 +1900,22 @@ public class LeatherUI : Mod
         }
     }
 
-    // arrow keys and page keys turn the recipe list's pages (not while typing in a field)
+    // arrow keys, page keys and the mouse wheel over the left page turn the recipe list's pages (not while
+    // typing in a field)
     void Keys()
     {
-        if (storeOpen || pageStarts.Count < 2) return;
+        if (view != 1 || pageStarts.Count < 2) return;
         UnityEngine.EventSystems.EventSystem es = UnityEngine.EventSystems.EventSystem.current;
         GameObject sel = es != null ? es.currentSelectedGameObject : null;
         InputField inf = sel != null ? sel.GetComponent<InputField>() : null;
         if (inf != null && inf.isFocused) return;
         if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.PageDown)) Flip(1);
         if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.PageUp)) Flip(-1);
+        float wd = Input.mouseScrollDelta.y;
+        Vector2 lp;
+        if (wd != 0f && RectTransformUtility.ScreenPointToLocalPointInRectangle(bookRoot, Input.mousePosition, UiCam(), out lp)
+            && lp.x < bookCx && lp.x > bookCx - bookW * 0.5f && lp.y < pageTop && lp.y > pageBottom)
+            Flip(wd < 0f ? 1 : -1);
     }
 
     // the page arrows take clicks, so they live in a holder of their own above the game's panels
@@ -1707,6 +1925,19 @@ public class LeatherUI : Mod
         Span(bookTop, Vector2.zero, Vector2.one, 0f, 0f, 0f, 0f);
         prevBtn = ArrowButton("Prev", "<", () => { Flip(-1); });
         nextBtn = ArrowButton("Next", ">", () => { Flip(1); });
+        // the bookmarks open their view: what sticks out of the cover takes the click
+        for (int i = 0; i < 3; i++)
+        {
+            int v = i;
+            Image h = Pic(bookTop, "Tab" + i, null, new Color(0f, 0f, 0f, 0f), Image.Type.Simple);
+            h.raycastTarget = true;
+            Place(h.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0f, 0.5f), Vector2.zero, new Vector2(-RibbonSel - M + 4f, 56f));
+            Button b = h.gameObject.AddComponent<Button>();
+            b.transition = Selectable.Transition.None;
+            Navigation nv = new Navigation(); nv.mode = Navigation.Mode.None; b.navigation = nv;
+            b.onClick.AddListener(() => { SetView(v); });
+            ribHit[i] = h;
+        }
     }
 
     Button ArrowButton(string name, string key, UnityEngine.Events.UnityAction act)
@@ -1803,6 +2034,10 @@ public class LeatherUI : Mod
     void Restore()
     {
         HideCrafting(false);
+        Unveil();
+        UnclipAll();
+        if (sens.has && menu != null && menu.scrollRect != null) menu.scrollRect.scrollSensitivity = sens.orig;
+        sens.has = false;
         HideItemInfo(false);
         InvTitle(false);
         if (cardHas && cardT != null)
