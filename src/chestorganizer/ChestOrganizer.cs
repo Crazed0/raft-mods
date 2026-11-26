@@ -2,48 +2,71 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
-using UnityEngine.UI;
+using UnityEngine.InputSystem;
 using HarmonyLib;
 using HMLLibrary;
 using RaftModLoader;
 using Steamworks;
 
-// Chest Organizer v1.0.0
-// 1) "Arrumar jangada": a button next to the chest's own Sort button. It closes the chest and the HOST
-//    sorts every chest on the raft by crafting category (same stacking rule as the game's Sort:
-//    full-durability stacks merge, damaged tools and items with an exclusive string stay as they are).
-//    A category starts in a fresh chest when it would otherwise be split and everything still fits.
-//    Chests someone has open, the trash can and storages with special slots are left alone.
-//    Before/after totals (amount and uses per item) must match, otherwise every slot is put back.
-// 2) Sync fix for Craft From All Storage: it takes items from CLOSED chests and sends the game's
-//    StorageManager_Close message. The host applies it but the game only passes a message on to the
-//    other players when Deserialize returns true, and CloseStorage returns false for a chest that is
-//    not open, so with 3+ players the others never heard about it. The host now passes it on.
-//    Clients also ask the host for fresh chest contents when the inventory opens or the hammer shows
-//    costs (at most every 8 s), so a copy that went stale for any reason heals itself.
+// Chest Organizer v1.1.0
+// 1) Shared chests. Several players can have the same chest open. The HOST owns what every chest holds:
+//    - opening asks the host, which sends the chest's current contents to everyone;
+//    - every change a player makes in an open chest goes to the host as "these slots were X, now Y";
+//      the host only applies it if the slots still hold X (somebody else may have taken the item first);
+//    - a refused change is undone on that player: the chest goes back to the host's copy and the items
+//      come back out of (or go back into) the player's inventory, so nothing is ever duplicated;
+//    - the host sends every change to everyone as it happens, so all copies stay the same.
+// 2) Craft From All Storage on a client takes items from CLOSED chests. That edit is merged on the host
+//    slot by slot; when the host's copy changed in the meantime the item difference is taken from the
+//    chests, and whatever is missing is taken back from that player (now or as soon as they have it).
+// 3) The host sorts every chest on the raft by crafting category on its own, a couple of seconds after
+//    the last change, while nobody has a chest open. The game's Sort and "put everything in" buttons are
+//    hidden. Before/after totals must match, otherwise every slot is put back.
 // Console (F10): arrumar | arrumar status
 public class ChestOrganizer : Mod
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.1.0";
     public const string HarmonyId = "com.bestcode.chestorganizer";
     const string NetSlug = "chest-organizer";
-    const string BtnName = "BC_ArrumarJangada";
-    const string BtnText = "Arrumar jangada";
-    const float SyncGap = 8f;
+    const int MaxPending = 24;
+    const float QuietBeforeArrange = 2f, ArrangeGap = 5f, ScanGap = 0.5f;
 
     public static ChestOrganizer I;
     Harmony harmony;
-    public static int relayed, syncedChests, arranged;
-    public static bool wantSync;
-    static float nextSyncReq, nextBtnLook;
-    bool lastInv, pendingOrg;
-    float pendingUntil;
-    static readonly List<GameObject> buttons = new List<GameObject>();
     static readonly HashSet<string> logged = new HashSet<string>();
+    public static int arranged, opsOk, opsNo, merges, conflicts;
+
+    // ---------- host ----------
+    static readonly Dictionary<uint, HashSet<ulong>> viewers = new Dictionary<uint, HashSet<ulong>>();
+    static readonly Dictionary<uint, string[]> lastSent = new Dictionary<uint, string[]>();
+    static readonly Dictionary<ulong, HashSet<uint>> rejecting = new Dictionary<ulong, HashSet<uint>>();
+    static bool dirty = true;
+    static float lastChange, lastArrange, nextScan, nextClean;
+
+    // ---------- local player (host and clients) ----------
+    public static bool hasSession;
+    public static Storage_Small session;
+    static uint sessionObj;
+    static float sessionAt;
+    static bool leaving;
+
+    // ---------- clients ----------
+    class Op { public int id; public int[] idx; public string[] before, after; }
+    class Debt { public int idx, amt; }
+    static readonly Dictionary<uint, string[]> known = new Dictionary<uint, string[]>();
+    static readonly Dictionary<uint, List<Op>> pending = new Dictionary<uint, List<Op>>();
+    static readonly Dictionary<uint, int> pendingCf = new Dictionary<uint, int>();
+    static readonly Dictionary<uint, string[]> lastCfNew = new Dictionary<uint, string[]>();
+    static readonly List<Debt> debts = new List<Debt>();
+    static int opSeq;
+    static uint opening;
+    static float openingUntil, nextReq, nextDebt;
+    static bool synced;
 
     public void Start()
     {
         I = this;
+        ResetAll();
         harmony = new Harmony(HarmonyId);
         int patched = 0;
         var broken = new List<string>();
@@ -58,10 +81,32 @@ public class ChestOrganizer : Mod
 
     public void OnModUnload()
     {
+        try { if (hasSession) LocalLeave(true); } catch { }
         if (harmony != null) harmony.UnpatchAll(HarmonyId);
-        foreach (GameObject g in buttons) if (g != null) UnityEngine.Object.Destroy(g);
-        buttons.Clear();
         I = null;
+    }
+
+    public override void WorldEvent_WorldUnloaded() { ResetAll(); }
+
+    public override void WorldEvent_OnPlayerDisconnected(Network_UserId userid, DisconnectReason disconnectReason)
+    {
+        if (!Raft_Network.IsHost) return;
+        try
+        {
+            foreach (uint o in new List<uint>(viewers.Keys)) HostLeave(userid.Id, o);
+            rejecting.Remove(userid.Id);
+        }
+        catch (Exception e) { LogOnce("saida de jogador falhou: " + e.Message); }
+    }
+
+    static void ResetAll()
+    {
+        viewers.Clear(); lastSent.Clear(); rejecting.Clear();
+        known.Clear(); pending.Clear(); pendingCf.Clear(); lastCfNew.Clear(); debts.Clear();
+        hasSession = false; session = null; sessionObj = 0; opening = 0;
+        synced = false; dirty = true; nextReq = 0f;
+        lastArrange = Time.unscaledTime;
+        lastChange = Time.unscaledTime;
     }
 
     public static void Log(string m) { Debug.Log("[ChestOrganizer] " + m); }
@@ -72,71 +117,67 @@ public class ChestOrganizer : Mod
         try { return RAPI.GetLocalPlayer(); } catch { return null; }
     }
 
+    static ulong MyId()
+    {
+        Raft_Network net = ComponentManager<Raft_Network>.Value;
+        return net != null ? net.LocalSteamID.Id : 0UL;
+    }
+
     public void Update()
     {
         Network_Player me = Me();
         if (me == null) return;
         try
         {
-            bool inv = CanvasHelper.ActiveMenu == MenuType.Inventory;
-            if (inv && !lastInv) wantSync = true;
-            lastInv = inv;
-            if (Raft_Network.IsHost) wantSync = false;
-            else if (wantSync && Time.unscaledTime >= nextSyncReq)
-            {
-                wantSync = false;
-                nextSyncReq = Time.unscaledTime + SyncGap;
-                Send("req");
-            }
-
-            Storage_Small cur = me.StorageManager != null ? me.StorageManager.currentStorage : null;
-            if (inv && cur != null && cur.IsOpen && Time.unscaledTime >= nextBtnLook)
-            {
-                nextBtnLook = Time.unscaledTime + 0.4f;
-                EnsureButton();
-            }
-
-            if (pendingOrg && (cur == null || !cur.IsOpen || Time.unscaledTime > pendingUntil))
-            {
-                pendingOrg = false;
-                Send("org");
-            }
+            if (hasSession && session == null) LocalLeave(true); // chest destroyed
+            if (Raft_Network.IsHost) HostTick();
+            else ClientTick();
+            if (hasSession && Time.unscaledTime - sessionAt > 0.5f && CanvasHelper.ActiveMenu != MenuType.Inventory) LocalLeave(true);
         }
-        catch (Exception e) { LogOnce("update falhou: " + e.Message); }
+        catch (Exception e) { LogOnce("update falhou: " + e); }
     }
 
+    // ---------- network ----------
     static void Send(string msg)
     {
         try { if (I != null) I.SendNetworkMessage(msg, Target.Other, EP2PSend.k_EP2PSendReliable, NetSlug); }
         catch (Exception e) { LogOnce("envio falhou: " + e.Message); }
     }
 
+    static void SendTo(ulong id, string msg)
+    {
+        try { if (I != null) I.SendNetworkMessageToPlayer(msg, new Network_UserId(id), EP2PSend.k_EP2PSendReliable, NetSlug); }
+        catch (Exception e) { LogOnce("envio falhou: " + e.Message); }
+    }
+
+    static void SendHost(string msg)
+    {
+        Raft_Network net = ComponentManager<Raft_Network>.Value;
+        if (net == null) return;
+        SendTo(net.HostID.Id, msg);
+    }
+
     public override bool OnNetworkMessage(object message, Network_UserId from, string modslug)
     {
         if (modslug != NetSlug) return false;
         string s = message as string;
-        if (s == null) return true;
+        if (s == null || Me() == null) return true;
         try
         {
-            if (s == "req") { if (Raft_Network.IsHost) SendSnapshot(); }
-            else if (s == "org")
+            if (Raft_Network.IsHost) HostMessage(from.Id, s);
+            else
             {
-                if (Raft_Network.IsHost)
-                {
-                    string r = Arrange();
-                    Notify(r);
-                    Send("done|" + r);
-                }
+                Raft_Network net = ComponentManager<Raft_Network>.Value;
+                if (net != null && from.Id != net.HostID.Id) return true;
+                ClientMessage(s);
             }
-            else if (s.StartsWith("snap", StringComparison.Ordinal)) { if (!Raft_Network.IsHost) ApplySnapshot(s); }
-            else if (s.StartsWith("done|", StringComparison.Ordinal)) Notify(s.Substring(5));
         }
-        catch (Exception e) { Log("mensagem '" + (s.Length > 8 ? s.Substring(0, 8) : s) + "' falhou: " + e); }
+        catch (Exception e) { Log("mensagem '" + (s.Length > 12 ? s.Substring(0, 12) : s) + "' falhou: " + e); }
         return true;
     }
 
-    // ---------- shared helpers ----------
-    static bool Skip(Storage_Small st, out Inventory inv)
+    // ---------- cells: one string per slot, "" = empty, else UniqueIndex:Amount:Uses[:exclusive] ----------
+    public static bool Skip(Storage_Small st, out Inventory inv)
     {
         inv = null;
         if (st == null) return true;
@@ -147,89 +188,842 @@ public class ChestOrganizer : Mod
         return false;
     }
 
-    static string Encode(Inventory inv)
+    static string Cell(Slot sl)
     {
-        var sb = new StringBuilder();
-        for (int i = 0; i < inv.allSlots.Count; i++)
-        {
-            if (i > 0) sb.Append(';');
-            Slot sl = inv.allSlots[i];
-            if (sl == null || !sl.HasValidItemInstance()) continue;
-            ItemInstance it = sl.itemInstance;
-            sb.Append(it.UniqueIndex).Append(':').Append(it.Amount).Append(':').Append(it.Uses);
-            if (!string.IsNullOrEmpty(it.exclusiveString)) sb.Append(':').Append(Uri.EscapeDataString(it.exclusiveString));
-        }
-        return sb.ToString();
+        if (sl == null || !sl.HasValidItemInstance()) return "";
+        ItemInstance it = sl.itemInstance;
+        string c = it.UniqueIndex + ":" + it.Amount + ":" + it.Uses;
+        if (!string.IsNullOrEmpty(it.exclusiveString)) c += ":" + Uri.EscapeDataString(it.exclusiveString);
+        return c;
     }
 
-    static bool Decode(Inventory inv, string enc)
+    static string[] Cells(Inventory inv)
     {
-        string[] cells = enc.Split(';');
-        if (cells.Length != inv.allSlots.Count) { LogOnce("bau com tamanho diferente do host, ignorado"); return false; }
-        for (int i = 0; i < cells.Length; i++)
+        var r = new string[inv.allSlots.Count];
+        for (int i = 0; i < r.Length; i++) r[i] = Cell(inv.allSlots[i]);
+        return r;
+    }
+
+    static bool Parse(string c, out Item_Base b, out int amt, out int uses, out string ex)
+    {
+        b = null; amt = 0; uses = 0; ex = "";
+        if (string.IsNullOrEmpty(c)) return false;
+        string[] p = c.Split(':');
+        int idx;
+        if (p.Length < 3 || !int.TryParse(p[0], out idx) || !int.TryParse(p[1], out amt) || !int.TryParse(p[2], out uses)) return false;
+        b = ItemManager.GetItemByIndex(idx);
+        if (p.Length > 3) ex = Uri.UnescapeDataString(p[3]);
+        return b != null && amt > 0;
+    }
+
+    static bool SetCell(Slot sl, string c)
+    {
+        if (sl == null) return false;
+        if (c.Length == 0)
         {
-            Slot sl = inv.allSlots[i];
-            if (sl == null) continue;
-            string c = cells[i];
-            if (c.Length == 0) { if (sl.HasValidItemInstance()) sl.SetItem((ItemInstance)null); continue; }
-            string[] p = c.Split(':');
-            int idx, amt, uses;
-            if (p.Length < 3 || !int.TryParse(p[0], out idx) || !int.TryParse(p[1], out amt) || !int.TryParse(p[2], out uses)) continue;
-            Item_Base b = ItemManager.GetItemByIndex(idx);
-            if (b == null) continue;
-            string ex = p.Length > 3 ? Uri.UnescapeDataString(p[3]) : "";
-            sl.SetItem(new ItemInstance(b, amt, uses, ex));
+            if (sl.HasValidItemInstance()) sl.SetItem((ItemInstance)null);
+            return true;
         }
+        Item_Base b; int amt, uses; string ex;
+        if (!Parse(c, out b, out amt, out uses, out ex)) { LogOnce("item desconhecido no bau: " + c); return false; }
+        sl.SetItem(new ItemInstance(b, amt, uses, ex));
         return true;
     }
 
-    // ---------- sync: host sends what every closed chest holds, clients copy it ----------
-    static void SendSnapshot()
+    static bool WriteCells(Inventory inv, string[] cells)
     {
-        var sb = new StringBuilder("snap");
-        int n = 0;
-        foreach (Storage_Small st in StorageManager.allStorages)
+        if (cells.Length != inv.allSlots.Count) { LogOnce("bau com tamanho diferente do host, ignorado"); return false; }
+        bool changed = false;
+        for (int i = 0; i < cells.Length; i++)
         {
-            Inventory inv;
-            if (Skip(st, out inv) || st.IsOpen) continue;
-            sb.Append('\n').Append(st.ObjectIndex).Append('|').Append(Encode(inv));
-            n++;
+            Slot sl = inv.allSlots[i];
+            if (sl == null || Cell(sl) == cells[i]) continue;
+            SetCell(sl, cells[i]);
+            changed = true;
         }
-        Send(sb.ToString());
-        LogOnce("primeiro envio de baus aos amigos (" + n + " baus)");
+        return changed;
     }
 
-    static void ApplySnapshot(string s)
+    static string Key(string cell, out int amt)
     {
-        Network_Player me = Me();
-        StorageManager sm = me != null ? me.StorageManager : null;
-        if (sm == null) return;
-        string[] lines = s.Split('\n');
-        int changed = 0;
-        for (int l = 1; l < lines.Length; l++)
-        {
-            string line = lines[l];
-            int bar = line.IndexOf('|');
-            uint obj;
-            if (bar <= 0 || !uint.TryParse(line.Substring(0, bar), out obj)) continue;
-            Storage_Small st = sm.GetStorageByObjectIndex(obj);
-            Inventory inv;
-            if (Skip(st, out inv) || st.IsOpen) continue;
-            string enc = line.Substring(bar + 1);
-            if (Encode(inv) == enc) continue;
-            if (Decode(inv, enc)) { changed++; Fill(st); }
-        }
-        if (changed > 0)
-        {
-            syncedChests += changed;
-            Log("corrigidos " + changed + " baus que estavam desatualizados (copia do host)");
-        }
-        else LogOnce("baus em dia com o host");
+        amt = 0;
+        string[] p = cell.Split(':');
+        if (p.Length < 3 || !int.TryParse(p[1], out amt)) return null;
+        return p[0] + ":" + p[2] + ":" + (p.Length > 3 ? p[3] : "");
+    }
+
+    static void AddDelta(Dictionary<string, long> d, string cell, int sign)
+    {
+        if (string.IsNullOrEmpty(cell)) return;
+        int amt;
+        string k = Key(cell, out amt);
+        if (k == null || amt <= 0) return;
+        long v;
+        d.TryGetValue(k, out v);
+        d[k] = v + sign * (long)amt;
+    }
+
+    static bool SplitKey(string key, out Item_Base b, out int idx, out int uses, out string ex)
+    {
+        b = null; idx = 0; uses = 0; ex = "";
+        string[] p = key.Split(':');
+        if (p.Length < 2 || !int.TryParse(p[0], out idx) || !int.TryParse(p[1], out uses)) return false;
+        if (p.Length > 2) ex = Uri.UnescapeDataString(p[2]);
+        b = ItemManager.GetItemByIndex(idx);
+        return b != null;
+    }
+
+    static Storage_Small FindSt(uint o)
+    {
+        foreach (Storage_Small st in StorageManager.allStorages)
+            if (st != null && st.ObjectIndex == o) return st;
+        return null;
     }
 
     static void Fill(Storage_Small st)
     {
         try { st.UpdateStorageFillRenderers(); } catch { }
+    }
+
+    static void VisualOpen(Storage_Small st)
+    {
+        if (st != null && !st.IsOpen) st.Open(null);
+    }
+
+    static void VisualClose(Storage_Small st)
+    {
+        if (st != null && st.IsOpen) st.Close(null);
+    }
+
+    // ---------- opening / closing on this machine ----------
+    public static bool Rayed(Storage_Small st)
+    {
+        Inventory inv;
+        if (Skip(st, out inv)) return true;
+        CanvasHelper cv = st.canvas != null ? st.canvas : ComponentManager<CanvasHelper>.Value;
+        if (cv == null || cv.displayTextManager == null) return true;
+        if (CanvasHelper.ActiveMenu != MenuType.None) { cv.displayTextManager.HideDisplayTexts(); return false; }
+        bool mine = hasSession && session == st;
+        if (!mine && opening == 0 && !PlayerItemManager.IsBusy && cv.CanOpenMenu && Helper.LocalPlayerIsWithinDistance(st.transform.position, Player.UseDistance + 0.5f))
+        {
+            InputAction action = PlayerInput.GetPlayerByIndex(0).actions["Interact"];
+            cv.displayTextManager.ShowText(Helper.GetTerm("Game/Open"), action.GetBindingDisplayString(), MyInput.Keybinds["Interact"].MainKey);
+            if (SimpleMonoBehaviourSingleton<CustomInputConfig>.Instance.WasPressedThisFrame(action, "Interact"))
+            {
+                cv.displayTextManager.HideDisplayTexts();
+                RequestOpen(st);
+            }
+        }
+        else cv.displayTextManager.HideDisplayTexts();
+        return false;
+    }
+
+    static void RequestOpen(Storage_Small st)
+    {
+        if (Raft_Network.IsHost) { HostOpen(MyId(), st); return; }
+        opening = st.ObjectIndex;
+        openingUntil = Time.unscaledTime + 3f;
+        SendHost("o?|" + opening);
+    }
+
+    static void LocalOpen(Storage_Small st)
+    {
+        Network_Player me = Me();
+        if (me == null || st == null) return;
+        if (hasSession && session != st) LocalLeave(true);
+        StorageManager sm = me.StorageManager;
+        PlayerInventory pinv = me.Inventory;
+        Inventory inv = st.GetInventoryReference();
+        if (sm == null || pinv == null || inv == null) return;
+        if (sm.currentStorage != null && sm.currentStorage != st && sm.currentStorage.IsOpen) sm.CloseStorage(sm.currentStorage);
+        sm.currentStorage = st;
+        pinv.secondInventory = inv;
+        inv.secondInventory = pinv;
+        session = st;
+        sessionObj = st.ObjectIndex;
+        hasSession = true;
+        sessionAt = Time.unscaledTime;
+        opening = 0;
+        inv.Show();
+        CanvasHelper cv = ComponentManager<CanvasHelper>.Value;
+        if (cv != null) cv.OpenMenuCloseOther(MenuType.Inventory);
+        PlayerItemManager.IsBusy = true;
+        st.canCloseWithUsebutton = false;
+        st.CancelInvoke("AllowCloseWithUseButton");
+        st.Invoke("AllowCloseWithUseButton", 0.15f);
+    }
+
+    public static void Leave() { LocalLeave(true); }
+
+    static void LocalLeave(bool tell)
+    {
+        if (!hasSession || leaving) return;
+        leaving = true;
+        try
+        {
+            Storage_Small st = session;
+            uint o = sessionObj;
+            if (!Raft_Network.IsHost && st != null) Capture(st, o);
+            hasSession = false;
+            session = null;
+            Network_Player me = Me();
+            if (me != null)
+            {
+                if (me.StorageManager != null && (me.StorageManager.currentStorage == st || me.StorageManager.currentStorage == null)) me.StorageManager.currentStorage = null;
+                if (me.Inventory != null) me.Inventory.secondInventory = null;
+            }
+            if (st != null)
+            {
+                Inventory inv = st.GetInventoryReference();
+                if (inv != null) { inv.secondInventory = null; inv.Hide(); }
+            }
+            PlayerItemManager.IsBusy = false;
+            CanvasHelper cv = ComponentManager<CanvasHelper>.Value;
+            if (cv != null && CanvasHelper.ActiveMenu == MenuType.Inventory) cv.CloseMenu(MenuType.Inventory);
+            if (tell)
+            {
+                if (Raft_Network.IsHost) HostLeave(MyId(), o);
+                else SendHost("c|" + o);
+            }
+        }
+        finally { leaving = false; }
+    }
+
+    public static void SessionKeys(StorageManager sm)
+    {
+        Storage_Small st = session;
+        Network_Player p = sm.playerNetwork;
+        if (st == null || p == null) return;
+        var cic = SimpleMonoBehaviourSingleton<CustomInputConfig>.Instance;
+        var acts = PlayerInput.GetPlayerByIndex(0).actions;
+        bool close = !cic.Gamepad
+            ? ((MyInput.GetButtonDown("Interact") && st.CanCloseWithUseButton) || MyInput.GetButtonDown("Inventory") || MyInput.GetButtonDown("Cancel"))
+            : ((acts["Interact"].WasPressedThisFrame() && st.CanCloseWithUseButton) || acts["Cancel"].WasPressedThisFrame());
+        if (close || Vector3.Distance(p.transform.position, st.transform.position) > sm.maxDistanceToStorage || p.Stats.IsDead) Leave();
+    }
+
+    // ---------- host ----------
+    static void HostTick()
+    {
+        float now = Time.unscaledTime;
+        if (now >= nextClean) { nextClean = now + 1f; CleanViewers(); }
+        bool all = now >= nextScan;
+        if (all) nextScan = now + ScanGap;
+        foreach (Storage_Small st in StorageManager.allStorages)
+        {
+            Inventory inv;
+            if (Skip(st, out inv)) continue;
+            if (all || viewers.ContainsKey(st.ObjectIndex)) Flush(st, true);
+        }
+        if (dirty && viewers.Count == 0 && now - lastChange >= QuietBeforeArrange && now - lastArrange >= ArrangeGap)
+        {
+            lastArrange = now;
+            int changed;
+            string r = Arrange(out changed);
+            FlushAll(false);
+            dirty = false;
+            if (changed > 0) Log(r);
+        }
+    }
+
+    static void CleanViewers()
+    {
+        Raft_Network net = ComponentManager<Raft_Network>.Value;
+        if (net == null) return;
+        var present = new HashSet<ulong> { MyId() };
+        foreach (Network_UserId id in net.remoteUsers.Keys) present.Add(id.Id);
+        foreach (uint o in new List<uint>(viewers.Keys))
+        {
+            HashSet<ulong> set = viewers[o];
+            if (FindSt(o) == null) { viewers.Remove(o); Send("x|" + o); continue; }
+            foreach (ulong id in new List<ulong>(set))
+                if (!present.Contains(id)) HostLeave(id, o);
+        }
+        foreach (Storage_Small st in StorageManager.allStorages)
+        {
+            Inventory inv;
+            if (Skip(st, out inv) || !st.IsOpen || viewers.ContainsKey(st.ObjectIndex)) continue;
+            VisualClose(st);
+            Send("x|" + st.ObjectIndex);
+        }
+    }
+
+    static void Flush(Storage_Small st, bool markDirty)
+    {
+        Inventory inv;
+        if (Skip(st, out inv)) return;
+        uint o = st.ObjectIndex;
+        string[] cur = Cells(inv);
+        string[] last;
+        if (!lastSent.TryGetValue(o, out last) || last.Length != cur.Length) { lastSent[o] = cur; return; }
+        StringBuilder sb = null;
+        for (int i = 0; i < cur.Length; i++)
+        {
+            if (cur[i] == last[i]) continue;
+            if (sb == null) sb = new StringBuilder("u|").Append(o).Append('|');
+            else sb.Append(';');
+            sb.Append(i).Append('=').Append(cur[i]);
+        }
+        if (sb == null) return;
+        lastSent[o] = cur;
+        Send(sb.ToString());
+        Fill(st);
+        if (markDirty) { dirty = true; lastChange = Time.unscaledTime; }
+    }
+
+    static void FlushAll(bool markDirty)
+    {
+        foreach (Storage_Small st in StorageManager.allStorages) Flush(st, markDirty);
+    }
+
+    static void HostOpen(ulong pid, Storage_Small st)
+    {
+        Inventory inv;
+        if (Skip(st, out inv)) return;
+        uint o = st.ObjectIndex;
+        Flush(st, true);
+        HashSet<ulong> set;
+        if (!viewers.TryGetValue(o, out set)) { set = new HashSet<ulong>(); viewers[o] = set; }
+        set.Add(pid);
+        VisualOpen(st);
+        Send("o|" + o + "|" + pid + "|" + string.Join(";", Cells(inv)));
+        if (pid == MyId()) LocalOpen(st);
+    }
+
+    static void HostLeave(ulong pid, uint o)
+    {
+        HashSet<ulong> set;
+        if (!viewers.TryGetValue(o, out set) || !set.Remove(pid)) return;
+        if (set.Count > 0) return;
+        viewers.Remove(o);
+        Storage_Small st = FindSt(o);
+        if (st != null) { Flush(st, true); VisualClose(st); }
+        Send("x|" + o);
+    }
+
+    static void HostMessage(ulong from, string s)
+    {
+        string[] p = s.Split('|');
+        uint o = 0;
+        if (p.Length > 1) uint.TryParse(p[1], out o);
+        switch (p[0])
+        {
+            case "req": SendFull(from); break;
+            case "o?":
+                {
+                    Storage_Small st = FindSt(o);
+                    Inventory inv;
+                    if (Skip(st, out inv)) SendTo(from, "ox|" + o);
+                    else HostOpen(from, st);
+                    break;
+                }
+            case "c": HostLeave(from, o); break;
+            case "op":
+                if (p.Length >= 4) { int id; int.TryParse(p[2], out id); HostOp(from, o, id, p.Length > 3 ? p[3] : ""); }
+                break;
+            case "rs":
+                {
+                    HashSet<uint> rj;
+                    if (rejecting.TryGetValue(from, out rj)) rj.Remove(o);
+                    break;
+                }
+            case "cf":
+                if (p.Length >= 5) HostMerge(from, o, p[3], p[4]);
+                break;
+            case "org":
+                {
+                    string r = viewers.Count > 0 ? "Ha baus abertos, arrumo quando fecharem." : ArrangeNow();
+                    SendTo(from, "done|" + r);
+                    break;
+                }
+        }
+    }
+
+    static void SendFull(ulong to)
+    {
+        var sb = new StringBuilder("f");
+        int n = 0;
+        foreach (Storage_Small st in StorageManager.allStorages)
+        {
+            Inventory inv;
+            if (Skip(st, out inv)) continue;
+            Flush(st, true);
+            sb.Append('\n').Append(st.ObjectIndex).Append('|').Append(viewers.ContainsKey(st.ObjectIndex) ? '1' : '0').Append('|').Append(string.Join(";", Cells(inv)));
+            n++;
+        }
+        SendTo(to, sb.ToString());
+        Log("enviados " + n + " baus a um jogador que entrou");
+    }
+
+    static void HostOp(ulong from, uint o, int id, string changes)
+    {
+        HashSet<uint> rj;
+        if (rejecting.TryGetValue(from, out rj) && rj.Contains(o)) return; // the client undoes these itself
+        bool ok = false;
+        Storage_Small st = FindSt(o);
+        Inventory inv;
+        HashSet<ulong> set;
+        if (!Skip(st, out inv) && viewers.TryGetValue(o, out set) && set.Contains(from))
+        {
+            Flush(st, true);
+            string[] cur = Cells(inv);
+            var idx = new List<int>();
+            var after = new List<string>();
+            ok = true;
+            foreach (string ch in changes.Split(';'))
+            {
+                int eq = ch.IndexOf('='), gt = ch.IndexOf('>');
+                int i;
+                if (eq <= 0 || gt < eq || !int.TryParse(ch.Substring(0, eq), out i) || i < 0 || i >= cur.Length) { ok = false; break; }
+                if (cur[i] != ch.Substring(eq + 1, gt - eq - 1)) { ok = false; break; }
+                idx.Add(i);
+                after.Add(ch.Substring(gt + 1));
+            }
+            if (ok)
+            {
+                for (int k = 0; k < idx.Count; k++) SetCell(inv.allSlots[idx[k]], after[k]);
+                for (int k = 0; k < idx.Count; k++)
+                    if (Cell(inv.allSlots[idx[k]]) != after[k]) { ok = false; break; }
+                if (!ok) WriteCells(inv, cur);
+            }
+            Flush(st, true);
+        }
+        if (ok) opsOk++;
+        else
+        {
+            opsNo++;
+            if (rj == null) { rj = new HashSet<uint>(); rejecting[from] = rj; }
+            rj.Add(o);
+            Log("mudanca recusada no bau " + o + " (outro jogador mexeu primeiro)");
+        }
+        SendTo(from, "a|" + o + "|" + id + "|" + (ok ? "1" : "0"));
+    }
+
+    static void HostMerge(ulong from, uint o, string baseStr, string newStr)
+    {
+        Storage_Small st = FindSt(o);
+        Inventory inv;
+        if (Skip(st, out inv)) { SendTo(from, "cfa|" + o); return; }
+        Flush(st, true);
+        string[] cur = Cells(inv);
+        string[] nw = newStr.Split(';');
+        var delta = new Dictionary<string, long>();
+        if (nw.Length != cur.Length) { LogOnce("fusao com tamanho errado, ignorada"); SendTo(from, "cfa|" + o); return; }
+        if (baseStr == "?")
+        {
+            // the client never got this chest from the host: only take away what it used
+            var a = new Dictionary<string, long>();
+            foreach (string c in cur) AddDelta(a, c, 1);
+            var b = new Dictionary<string, long>();
+            foreach (string c in nw) AddDelta(b, c, 1);
+            foreach (var kv in a)
+            {
+                long v;
+                b.TryGetValue(kv.Key, out v);
+                if (v < kv.Value) delta[kv.Key] = v - kv.Value;
+            }
+        }
+        else
+        {
+            string[] bs = baseStr.Split(';');
+            if (bs.Length != cur.Length) { LogOnce("fusao com tamanho errado, ignorada"); SendTo(from, "cfa|" + o); return; }
+            for (int i = 0; i < cur.Length; i++)
+            {
+                if (bs[i] == nw[i]) continue;
+                if (cur[i] == bs[i]) { SetCell(inv.allSlots[i], nw[i]); continue; }
+                AddDelta(delta, nw[i], 1);
+                AddDelta(delta, bs[i], -1);
+                conflicts++;
+            }
+        }
+        foreach (var kv in delta)
+        {
+            if (kv.Value < 0)
+            {
+                long left = RemoveFromChests(kv.Key, -kv.Value, st);
+                if (left > 0) { SendTo(from, "dbt|" + kv.Key + "|" + left); Log("faltavam " + left + " de " + kv.Key + ", tirados ao jogador"); }
+            }
+            else if (kv.Value > 0)
+            {
+                long left = AddToChest(inv, kv.Key, kv.Value);
+                if (left > 0) SendTo(from, "giv|" + kv.Key + "|" + left);
+            }
+        }
+        FlushAll(true);
+        merges++;
+        SendTo(from, "cfa|" + o);
+    }
+
+    static long RemoveFromChests(string key, long amt, Storage_Small first)
+    {
+        Item_Base b; int idx, uses; string ex;
+        if (!SplitKey(key, out b, out idx, out uses, out ex)) return amt;
+        var order = new List<Storage_Small> { first };
+        foreach (Storage_Small st in StorageManager.allStorages)
+            if (st != first && !viewers.ContainsKey(st.ObjectIndex)) order.Add(st);
+        foreach (Storage_Small st in StorageManager.allStorages)
+            if (st != first && viewers.ContainsKey(st.ObjectIndex)) order.Add(st);
+        for (int pass = 0; pass < 2 && amt > 0; pass++)
+            foreach (Storage_Small st in order)
+            {
+                Inventory inv;
+                if (Skip(st, out inv)) continue;
+                foreach (Slot sl in inv.allSlots)
+                {
+                    if (amt <= 0) break;
+                    if (sl == null || !sl.HasValidItemInstance() || sl.itemInstance.UniqueIndex != idx) continue;
+                    if (pass == 0 && sl.itemInstance.Uses != uses) continue;
+                    int n = (int)Math.Min(amt, sl.itemInstance.Amount);
+                    sl.RemoveItem(n);
+                    amt -= n;
+                }
+            }
+        return amt;
+    }
+
+    static long AddToChest(Inventory inv, string key, long amt)
+    {
+        Item_Base b; int idx, uses; string ex;
+        if (!SplitKey(key, out b, out idx, out uses, out ex)) return amt;
+        int ss = Mathf.Max(1, b.settings_Inventory.StackSize);
+        foreach (Slot sl in inv.allSlots)
+        {
+            if (amt <= 0) break;
+            if (sl == null || sl.HasValidItemInstance() || sl.locked || !sl.active || sl.slotType != SlotType.Normal) continue;
+            int n = (int)Math.Min(ss, amt);
+            sl.SetItem(new ItemInstance(b, n, uses, ex));
+            amt -= n;
+        }
+        return amt;
+    }
+
+    // ---------- clients ----------
+    static void ClientTick()
+    {
+        float now = Time.unscaledTime;
+        if (!synced && now >= nextReq) { nextReq = now + 4f; SendHost("req"); }
+        if (hasSession && session != null) Capture(session, sessionObj);
+        if (opening != 0 && now > openingUntil) opening = 0;
+        if (debts.Count > 0 && now >= nextDebt) { nextDebt = now + 1f; PayDebts(); }
+    }
+
+    static int Cf(uint o) { int c; return pendingCf.TryGetValue(o, out c) ? c : 0; }
+
+    static List<Op> Pend(uint o)
+    {
+        List<Op> l;
+        if (!pending.TryGetValue(o, out l)) { l = new List<Op>(); pending[o] = l; }
+        return l;
+    }
+
+    static string[] Expected(uint o)
+    {
+        string[] k;
+        if (!known.TryGetValue(o, out k)) return null;
+        var exp = (string[])k.Clone();
+        List<Op> l;
+        if (pending.TryGetValue(o, out l))
+            foreach (Op op in l)
+                for (int j = 0; j < op.idx.Length; j++)
+                    if (op.idx[j] < exp.Length) exp[op.idx[j]] = op.after[j];
+        return exp;
+    }
+
+    static void Refresh(uint o)
+    {
+        Storage_Small st = FindSt(o);
+        Inventory inv;
+        if (Skip(st, out inv)) return;
+        string[] exp = Expected(o);
+        if (exp == null) return;
+        if (WriteCells(inv, exp)) Fill(st);
+    }
+
+    // what changed in the chest this player has open since the last look becomes one request to the host
+    static void Capture(Storage_Small st, uint o)
+    {
+        Inventory inv = st.GetInventoryReference();
+        if (inv == null) return;
+        string[] exp = Expected(o);
+        if (exp == null) return;
+        string[] cur = Cells(inv);
+        if (cur.Length != exp.Length) return;
+        List<int> ch = null;
+        for (int i = 0; i < cur.Length; i++)
+            if (cur[i] != exp[i]) { if (ch == null) ch = new List<int>(); ch.Add(i); }
+        if (ch == null) return;
+        List<Op> list = Pend(o);
+        if (list.Count >= MaxPending) { LogOnce("demasiadas mudancas por confirmar no bau " + o); return; }
+        var op = new Op { id = ++opSeq, idx = ch.ToArray(), before = new string[ch.Count], after = new string[ch.Count] };
+        var sb = new StringBuilder("op|").Append(o).Append('|').Append(op.id).Append('|');
+        for (int j = 0; j < ch.Count; j++)
+        {
+            op.before[j] = exp[ch[j]];
+            op.after[j] = cur[ch[j]];
+            if (j > 0) sb.Append(';');
+            sb.Append(ch[j]).Append('=').Append(op.before[j]).Append('>').Append(op.after[j]);
+        }
+        list.Add(op);
+        SendHost(sb.ToString());
+    }
+
+    static void ClientMessage(string s)
+    {
+        if (s.StartsWith("f", StringComparison.Ordinal) && (s.Length == 1 || s[1] == '\n')) { ApplyFull(s); return; }
+        string[] p = s.Split('|');
+        uint o = 0;
+        if (p.Length > 1) uint.TryParse(p[1], out o);
+        switch (p[0])
+        {
+            case "u":
+                {
+                    string[] k;
+                    if (!known.TryGetValue(o, out k)) { synced = false; nextReq = 0f; return; }
+                    if (hasSession && o == sessionObj && session != null) Capture(session, o);
+                    if (p.Length > 2)
+                        foreach (string ch in p[2].Split(';'))
+                        {
+                            int eq = ch.IndexOf('=');
+                            int i;
+                            if (eq > 0 && int.TryParse(ch.Substring(0, eq), out i) && i >= 0 && i < k.Length) k[i] = ch.Substring(eq + 1);
+                        }
+                    if (Cf(o) == 0) Refresh(o);
+                    break;
+                }
+            case "o":
+                {
+                    if (p.Length < 4) return;
+                    if (hasSession && o == sessionObj && session != null) Capture(session, o);
+                    known[o] = p[3].Split(';');
+                    Storage_Small st = FindSt(o);
+                    if (st == null) return;
+                    VisualOpen(st);
+                    ulong pid;
+                    ulong.TryParse(p[2], out pid);
+                    if (pid == MyId())
+                    {
+                        Refresh(o);
+                        LocalOpen(st);
+                    }
+                    else if (Cf(o) == 0) Refresh(o);
+                    break;
+                }
+            case "x":
+                {
+                    if (hasSession && sessionObj == o) LocalLeave(false);
+                    VisualClose(FindSt(o));
+                    break;
+                }
+            case "ox": if (opening == o) opening = 0; break;
+            case "a":
+                {
+                    if (p.Length < 4) return;
+                    int id;
+                    int.TryParse(p[2], out id);
+                    Ack(o, id, p[3] == "1");
+                    break;
+                }
+            case "cfa":
+                {
+                    int c = Cf(o) - 1;
+                    if (c > 0) pendingCf[o] = c;
+                    else { pendingCf.Remove(o); lastCfNew.Remove(o); Refresh(o); }
+                    break;
+                }
+            case "dbt":
+                {
+                    if (p.Length < 3) return;
+                    long amt;
+                    long.TryParse(p[2], out amt);
+                    TakeFromMe(p[1], amt);
+                    break;
+                }
+            case "giv":
+                {
+                    if (p.Length < 3) return;
+                    long amt;
+                    long.TryParse(p[2], out amt);
+                    GiveToMe(p[1], amt);
+                    break;
+                }
+            case "done": if (p.Length > 1) Notify(p[1]); break;
+        }
+    }
+
+    static void ApplyFull(string s)
+    {
+        string[] lines = s.Split('\n');
+        int n = 0;
+        for (int l = 1; l < lines.Length; l++)
+        {
+            string[] p = lines[l].Split('|');
+            uint o;
+            if (p.Length < 3 || !uint.TryParse(p[0], out o)) continue;
+            if (hasSession && o == sessionObj && session != null) Capture(session, o);
+            known[o] = p[2].Split(';');
+            Storage_Small st = FindSt(o);
+            if (st == null) continue;
+            if (p[1] == "1") VisualOpen(st);
+            else if (!(hasSession && sessionObj == o)) VisualClose(st);
+            if (Cf(o) == 0) Refresh(o);
+            n++;
+        }
+        if (!synced) Log("baus recebidos do host (" + n + ")");
+        synced = true;
+    }
+
+    static void Ack(uint o, int id, bool ok)
+    {
+        if (hasSession && o == sessionObj && session != null) Capture(session, o);
+        List<Op> list = Pend(o);
+        int at = list.FindIndex(x => x.id == id);
+        if (at < 0) return;
+        if (ok) { list.RemoveRange(0, at + 1); opsOk++; }
+        else
+        {
+            // undo this change and every later one: the chest goes back to the host's copy,
+            // the items go back the other way in this player's inventory
+            var delta = new Dictionary<string, long>();
+            for (int j = list.Count - 1; j >= at; j--)
+                for (int k = 0; k < list[j].idx.Length; k++)
+                {
+                    AddDelta(delta, list[j].after[k], 1);
+                    AddDelta(delta, list[j].before[k], -1);
+                }
+            list.RemoveRange(at, list.Count - at);
+            foreach (var kv in delta)
+            {
+                if (kv.Value < 0) TakeFromMe(kv.Key, -kv.Value);
+                else if (kv.Value > 0) GiveToMe(kv.Key, kv.Value);
+            }
+            opsNo++;
+            SendHost("rs|" + o);
+            Notify("Outro jogador mexeu primeiro nesse item, a tua jogada foi desfeita.");
+        }
+        Refresh(o);
+    }
+
+    static List<Slot> MySlots()
+    {
+        var r = new List<Slot>();
+        Network_Player me = Me();
+        PlayerInventory pinv = me != null ? me.Inventory : null;
+        if (pinv == null) return r;
+        if (pinv.allSlots != null) r.AddRange(pinv.allSlots);
+        if (pinv.equipSlots != null) foreach (Slot_Equip e in pinv.equipSlots) r.Add(e);
+        return r;
+    }
+
+    static long TakeFromMe(int idx, int uses, long amt)
+    {
+        List<Slot> slots = MySlots();
+        for (int pass = 0; pass < 2 && amt > 0; pass++)
+            foreach (Slot sl in slots)
+            {
+                if (amt <= 0) break;
+                if (sl == null || !sl.HasValidItemInstance() || sl.itemInstance.UniqueIndex != idx) continue;
+                if (pass == 0 && uses >= 0 && sl.itemInstance.Uses != uses) continue;
+                int n = (int)Math.Min(amt, sl.itemInstance.Amount);
+                sl.RemoveItem(n);
+                amt -= n;
+            }
+        return amt;
+    }
+
+    static void TakeFromMe(string key, long amt)
+    {
+        Item_Base b; int idx, uses; string ex;
+        if (amt <= 0 || !SplitKey(key, out b, out idx, out uses, out ex)) return;
+        long left = TakeFromMe(idx, uses, amt);
+        if (left > 0)
+        {
+            debts.Add(new Debt { idx = idx, amt = (int)left });
+            Log("fica a dever " + left + " de " + b.UniqueName + " (tirado assim que aparecer)");
+        }
+    }
+
+    static void GiveToMe(string key, long amt)
+    {
+        Item_Base b; int idx, uses; string ex;
+        if (amt <= 0 || !SplitKey(key, out b, out idx, out uses, out ex)) return;
+        // pay old debts of this item first
+        for (int i = debts.Count - 1; i >= 0 && amt > 0; i--)
+        {
+            if (debts[i].idx != idx) continue;
+            int n = (int)Math.Min(amt, debts[i].amt);
+            debts[i].amt -= n;
+            amt -= n;
+            if (debts[i].amt <= 0) debts.RemoveAt(i);
+        }
+        Network_Player me = Me();
+        PlayerInventory pinv = me != null ? me.Inventory : null;
+        if (pinv == null) return;
+        int ss = Mathf.Max(1, b.settings_Inventory.StackSize);
+        while (amt > 0)
+        {
+            int n = (int)Math.Min(ss, amt);
+            pinv.AddItem(new ItemInstance(b, n, uses, ex), true);
+            amt -= n;
+        }
+    }
+
+    static void PayDebts()
+    {
+        for (int i = debts.Count - 1; i >= 0; i--)
+        {
+            long left = TakeFromMe(debts[i].idx, -1, debts[i].amt);
+            debts[i].amt = (int)left;
+            if (left <= 0) debts.RemoveAt(i);
+        }
+    }
+
+    // A client's game wants to tell the host about a chest. Opens become our open request; a close for a
+    // chest that is not open here comes from Craft From All Storage and is merged on the host instead.
+    public static bool ClientIntercept(Message_Storage m)
+    {
+        Storage_Small st = FindSt(m.storageObjectIndex);
+        Inventory inv;
+        if (Skip(st, out inv)) return true;
+        uint o = st.ObjectIndex;
+        if (m.Type == Messages.StorageManager_Open)
+        {
+            if (!(hasSession && sessionObj == o) && opening == 0) RequestOpen(st);
+            return false;
+        }
+        if (hasSession && sessionObj == o) { LocalLeave(true); return false; }
+        string[] cur = Cells(inv);
+        int c = Cf(o);
+        string[] bs = null;
+        if (c > 0) lastCfNew.TryGetValue(o, out bs);
+        if (bs == null) known.TryGetValue(o, out bs);
+        if (bs != null && bs.Length == cur.Length)
+        {
+            bool same = true;
+            for (int i = 0; i < cur.Length && same; i++) same = bs[i] == cur[i];
+            if (same) return false;
+        }
+        SendHost("cf|" + o + "|" + (++opSeq) + "|" + (bs == null ? "?" : string.Join(";", bs)) + "|" + string.Join(";", cur));
+        pendingCf[o] = c + 1;
+        lastCfNew[o] = cur;
+        return false;
+    }
+
+    public static bool HostDeserialize(Message_Storage m, Network_UserId remote)
+    {
+        Storage_Small st = FindSt(m.storageObjectIndex);
+        Inventory inv;
+        if (Skip(st, out inv)) return true;
+        if (Raft_Network.IsHost)
+        {
+            if (m.Type == Messages.StorageManager_Open) HostOpen(remote.Id, st);
+            else
+            {
+                HashSet<ulong> set;
+                if (viewers.TryGetValue(st.ObjectIndex, out set) && set.Contains(remote.Id)) HostLeave(remote.Id, st.ObjectIndex);
+                else LogOnce("fecho de bau do jogo ignorado (o mod trata disto)");
+            }
+        }
+        return false;
     }
 
     // ---------- arrange (host only) ----------
@@ -274,11 +1068,22 @@ public class ChestOrganizer : Mod
         return true;
     }
 
-    public static string Arrange()
+    static string ArrangeNow()
     {
+        int changed;
+        string r = Arrange(out changed);
+        FlushAll(false);
+        dirty = false;
+        lastArrange = Time.unscaledTime;
+        Log(r);
+        return r;
+    }
+
+    public static string Arrange(out int changed)
+    {
+        changed = 0;
         if (!Raft_Network.IsHost) return "So o host pode arrumar a jangada.";
         var boxes = new List<Box>();
-        int openSkipped = 0;
         foreach (Storage_Small st in StorageManager.allStorages)
         {
             Inventory inv;
@@ -292,8 +1097,8 @@ public class ChestOrganizer : Mod
                 if (!sl.locked && sl.active) use.Add(sl);
             }
             if (special || use.Count == 0) continue;
-            if (st.IsOpen) { openSkipped++; continue; }
-            boxes.Add(new Box { st = st, free = use, before = Encode(inv) });
+            if (st.IsOpen || viewers.ContainsKey(st.ObjectIndex)) continue;
+            boxes.Add(new Box { st = st, free = use, before = string.Join(";", Cells(inv)) });
         }
         if (boxes.Count == 0) return "Nao ha baus fechados para arrumar.";
 
@@ -346,7 +1151,7 @@ public class ChestOrganizer : Mod
             return b.Uses.CompareTo(a.Uses);
         });
 
-        // plan
+        // plan: a category starts in a fresh chest when it would otherwise be split and everything still fits
         int[] suffix = new int[boxes.Count + 1];
         for (int i = boxes.Count - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + boxes[i].free.Count;
         if (stacks.Count > suffix[0]) return "Nao cabe tudo nos baus, nada foi mexido.";
@@ -391,58 +1196,12 @@ public class ChestOrganizer : Mod
             return "Nao consegui arrumar, ficou tudo como estava.";
         }
 
-        // tell everyone what changed (same message the game sends when a chest closes)
-        Network_Player me = Me();
-        Raft_Network net = ComponentManager<Raft_Network>.Value;
-        int changed = 0;
         foreach (Box b in boxes)
-        {
-            if (Encode(b.st.GetInventoryReference()) == b.before) continue;
-            changed++;
-            Fill(b.st);
-            try
-            {
-                if (net != null && me != null && me.StorageManager != null)
-                    net.RPC(new Message_Storage_Close(Messages.StorageManager_Close, me.StorageManager, b.st), Target.Other, EP2PSend.k_EP2PSendReliable, NetworkChannel.Channel_Game);
-            }
-            catch (Exception e) { LogOnce("envio do bau falhou: " + e.Message); }
-        }
+            if (string.Join(";", Cells(b.st.GetInventoryReference())) != b.before) changed++;
         arranged++;
-        string res = changed == 0
+        return changed == 0
             ? "A jangada ja estava arrumada (" + boxes.Count + " baus)."
-            : "Jangada arrumada: " + changed + " de " + boxes.Count + " baus mudaram.";
-        if (openSkipped > 0) res += " " + openSkipped + (openSkipped == 1 ? " bau aberto ficou" : " baus abertos ficaram") + " de fora.";
-        Log(res + " (" + stacks.Count + " montes)");
-        return res;
-    }
-
-    // ---------- button ----------
-    public void RequestArrange()
-    {
-        Network_Player me = Me();
-        if (me == null) return;
-        CloseMine(me);
-        if (Raft_Network.IsHost) Notify(Arrange());
-        else
-        {
-            pendingOrg = true;
-            pendingUntil = Time.unscaledTime + 2.5f;
-            Notify("A pedir ao host para arrumar a jangada...");
-        }
-    }
-
-    static void CloseMine(Network_Player me)
-    {
-        StorageManager sm = me.StorageManager;
-        Storage_Small cur = sm != null ? sm.currentStorage : null;
-        if (cur == null || !cur.IsOpen) return;
-        var m = new Message_Storage_Close(Messages.StorageManager_Close, sm, cur);
-        if (Raft_Network.IsHost)
-        {
-            me.Network.RPC(m, Target.Other, EP2PSend.k_EP2PSendReliable, NetworkChannel.Channel_Game);
-            sm.CloseStorage(cur);
-        }
-        else me.SendP2P(m, EP2PSend.k_EP2PSendReliable, NetworkChannel.Channel_Game);
+            : "Jangada arrumada: " + changed + " de " + boxes.Count + " baus mudaram (" + stacks.Count + " montes).";
     }
 
     static void Notify(string text)
@@ -456,122 +1215,6 @@ public class ChestOrganizer : Mod
         catch (Exception e) { LogOnce("aviso falhou: " + e.Message); }
     }
 
-    static bool IsSort(Button b, bool exact)
-    {
-        int n = b.onClick.GetPersistentEventCount();
-        for (int i = 0; i < n; i++)
-        {
-            string m = b.onClick.GetPersistentMethodName(i);
-            if (m == null) continue;
-            if (exact ? m == "Sort" : m.IndexOf("Sort", StringComparison.Ordinal) >= 0) return true;
-        }
-        return false;
-    }
-
-    void EnsureButton()
-    {
-        GameObject cv = GameObject.Find("_CanvasGame_New");
-        Transform ip = cv != null ? cv.transform.Find("InventoryParent") : null;
-        if (ip == null) { LogOnce("InventoryParent nao encontrado"); return; }
-        foreach (Transform panel in ip)
-        {
-            if (!panel.gameObject.activeInHierarchy || !panel.name.Contains("Storage")) continue;
-            Button src = null;
-            foreach (Button b in panel.GetComponentsInChildren<Button>(false))
-            {
-                if (b.name == BtnName) continue;
-                if (IsSort(b, true)) { src = b; break; }
-                if (src == null && IsSort(b, false)) src = b;
-            }
-            if (src == null)
-            {
-                var names = new List<string>();
-                foreach (Button b in panel.GetComponentsInChildren<Button>(false))
-                    names.Add(b.name + (b.onClick.GetPersistentEventCount() > 0 ? "=" + b.onClick.GetPersistentMethodName(0) : ""));
-                LogOnce("sem botao Sort em " + panel.name + ": " + string.Join(", ", names.ToArray()));
-                continue;
-            }
-            if (src.transform.parent.Find(BtnName) != null) continue;
-            MakeButton(src, panel.name);
-        }
-    }
-
-    void MakeButton(Button src, string panelName)
-    {
-        GameObject go = UnityEngine.Object.Instantiate(src.gameObject, src.transform.parent, false);
-        go.name = BtnName;
-        buttons.Add(go);
-        foreach (MonoBehaviour mb in go.GetComponentsInChildren<MonoBehaviour>(true))
-        {
-            if (mb == null) continue;
-            string tn = mb.GetType().Name;
-            if (tn.IndexOf("Locali", StringComparison.OrdinalIgnoreCase) >= 0 || tn.IndexOf("Tooltip", StringComparison.OrdinalIgnoreCase) >= 0)
-                UnityEngine.Object.DestroyImmediate(mb);
-        }
-        Button btn = go.GetComponent<Button>();
-        btn.onClick = new Button.ButtonClickedEvent();
-        btn.onClick.AddListener(RequestArrange);
-        int texts = 0;
-        foreach (Text t in go.GetComponentsInChildren<Text>(true))
-        {
-            t.text = BtnText;
-            t.resizeTextForBestFit = true;
-            t.resizeTextMinSize = 8;
-            t.resizeTextMaxSize = Mathf.Max(t.fontSize, 9);
-            texts++;
-        }
-        foreach (TMPro.TMP_Text t in go.GetComponentsInChildren<TMPro.TMP_Text>(true))
-        {
-            t.text = BtnText;
-            t.enableAutoSizing = true;
-            t.fontSizeMin = 8;
-            t.fontSizeMax = Mathf.Max(t.fontSize, 9);
-            texts++;
-        }
-
-        // put it beside the Sort button, on the first side with room that does not cover anything
-        RectTransform rt = (RectTransform)go.transform, sr = (RectTransform)src.transform;
-        RectTransform par = sr.parent as RectTransform;
-        string side = "layout";
-        if (par != null && par.GetComponent<LayoutGroup>() == null)
-        {
-            Rect pr = par.rect;
-            Rect me = Local(par, sr);
-            float gap = 6f;
-            Vector2[] shifts = { new Vector2(-(me.width + gap), 0f), new Vector2(me.width + gap, 0f), new Vector2(0f, -(me.height + gap)), new Vector2(0f, me.height + gap) };
-            string[] names = { "esquerda", "direita", "baixo", "cima" };
-            int pick = -1;
-            for (int i = 0; i < shifts.Length && pick < 0; i++)
-            {
-                Rect r = new Rect(me.position + shifts[i], me.size);
-                if (r.xMin < pr.xMin - 1f || r.xMax > pr.xMax + 1f || r.yMin < pr.yMin - 1f || r.yMax > pr.yMax + 1f) continue;
-                bool hit = false;
-                foreach (Transform c in par)
-                {
-                    if (c == sr || c == rt || !c.gameObject.activeInHierarchy) continue;
-                    RectTransform crt = c as RectTransform;
-                    if (crt == null) continue;
-                    Rect cr = Local(par, crt);
-                    if (cr.width >= pr.width * 0.9f && cr.height >= pr.height * 0.9f) continue; // background
-                    if (cr.Overlaps(new Rect(r.xMin + 1f, r.yMin + 1f, r.width - 2f, r.height - 2f))) { hit = true; break; }
-                }
-                if (!hit) pick = i;
-            }
-            if (pick < 0) pick = 2;
-            rt.anchoredPosition = sr.anchoredPosition + shifts[pick];
-            side = names[pick];
-        }
-        Log("botao '" + BtnText + "' criado em " + panelName + " ao lado de " + src.name + " (" + side + ", textos " + texts + ")");
-    }
-
-    static Rect Local(RectTransform par, RectTransform rt)
-    {
-        Vector3[] c = new Vector3[4];
-        rt.GetWorldCorners(c);
-        Vector2 a = par.InverseTransformPoint(c[0]), b = par.InverseTransformPoint(c[2]);
-        return Rect.MinMaxRect(Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y), Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y));
-    }
-
     // ---------- console ----------
     [ConsoleCommand("arrumar", "Chest Organizer. Syntax: arrumar | arrumar status")]
     public static string CmdArrumar(string[] args)
@@ -579,34 +1222,110 @@ public class ChestOrganizer : Mod
         if (I == null) return "Chest Organizer nao esta ativo.";
         foreach (string a in args)
             if (a == "status")
-                return "Chest Organizer v" + Version + ": baus " + StorageManager.allStorages.Count + ", mensagens passadas pelo host " + relayed
-                    + ", baus corrigidos com a copia do host " + syncedChests + ", arrumacoes " + arranged + (Raft_Network.IsHost ? " (host)" : " (cliente)");
-        I.RequestArrange();
-        return Raft_Network.IsHost ? "Feito." : "Pedido enviado ao host.";
+                return "Chest Organizer v" + Version + (Raft_Network.IsHost ? " (host)" : " (cliente)") + ": baus " + StorageManager.allStorages.Count
+                    + ", abertos " + viewers.Count + ", arrumacoes " + arranged + ", mudancas aceites " + opsOk + ", recusadas " + opsNo
+                    + ", fusoes " + merges + " (conflitos " + conflicts + "), por confirmar " + pending.Count + ", dividas " + debts.Count;
+        if (Raft_Network.IsHost) return viewers.Count > 0 ? "Ha baus abertos, arrumo quando fecharem." : ArrangeNow();
+        SendHost("org");
+        return "Pedido enviado ao host.";
     }
 }
 
-// Host: pass a chest's new contents on to every player even when the chest was closed (Craft From All Storage).
-[HarmonyPatch(typeof(StorageManager), nameof(StorageManager.Deserialize))]
-static class Patch_ChestOrganizer_Relay
+// Chests: our own open prompt (works while someone else has the chest open).
+[HarmonyPatch(typeof(Storage_Small), nameof(Storage_Small.OnIsRayed))]
+static class Patch_ChestOrganizer_Rayed
 {
-    static void Postfix(StorageManager __instance, Message_NetworkBehaviour msg, ref bool __result)
+    static bool Prefix(Storage_Small __instance)
     {
+        if (ChestOrganizer.I == null) return true;
+        try { return ChestOrganizer.Rayed(__instance); }
+        catch (Exception e) { ChestOrganizer.LogOnce("abrir falhou: " + e.Message); return true; }
+    }
+}
+
+// Close keys, distance and death for a shared chest; the game's sort keys do nothing there.
+[HarmonyPatch(typeof(StorageManager), "Update")]
+static class Patch_ChestOrganizer_SmUpdate
+{
+    static bool Prefix(StorageManager __instance)
+    {
+        if (ChestOrganizer.I == null || !ChestOrganizer.hasSession) return true;
+        if (__instance.playerNetwork == null || !__instance.playerNetwork.IsLocalPlayer) return true;
+        if (__instance.currentStorage != ChestOrganizer.session) return true;
+        try { ChestOrganizer.SessionKeys(__instance); }
+        catch (Exception e) { ChestOrganizer.LogOnce("teclas do bau falharam: " + e.Message); }
+        return false;
+    }
+}
+
+[HarmonyPatch(typeof(StorageManager), nameof(StorageManager.CloseStorage))]
+static class Patch_ChestOrganizer_CloseStorage
+{
+    static bool Prefix(StorageManager __instance, Storage_Small storage, ref bool __result)
+    {
+        if (ChestOrganizer.I == null || !ChestOrganizer.hasSession || storage == null || storage != ChestOrganizer.session) return true;
+        if (__instance.playerNetwork != null && __instance.playerNetwork.IsLocalPlayer) ChestOrganizer.Leave();
+        __result = true;
+        return false;
+    }
+}
+
+[HarmonyPatch(typeof(StorageManager), nameof(StorageManager.CloseCurrentStorage))]
+static class Patch_ChestOrganizer_CloseCurrent
+{
+    static bool Prefix(StorageManager __instance, ref bool __result)
+    {
+        if (ChestOrganizer.I == null || !ChestOrganizer.hasSession || __instance.currentStorage != ChestOrganizer.session) return true;
+        if (__instance.playerNetwork == null || !__instance.playerNetwork.IsLocalPlayer) return true;
+        ChestOrganizer.Leave();
+        __result = true;
+        return false;
+    }
+}
+
+// The game's own open/close messages for chests are replaced by the host-run sessions.
+[HarmonyPatch(typeof(StorageManager), nameof(StorageManager.Deserialize))]
+static class Patch_ChestOrganizer_Deserialize
+{
+    static bool Prefix(Message_NetworkBehaviour msg, Network_UserId remoteID, ref bool __result)
+    {
+        if (ChestOrganizer.I == null || msg == null) return true;
+        if (msg.Type != Messages.StorageManager_Open && msg.Type != Messages.StorageManager_Close) return true;
+        Message_Storage m = msg as Message_Storage;
+        if (m == null) return true;
         try
         {
-            if (__result || !Raft_Network.IsHost || msg == null || msg.Type != Messages.StorageManager_Close) return;
-            Message_Storage_Close m = msg as Message_Storage_Close;
-            if (m == null || __instance.GetStorageByObjectIndex(m.storageObjectIndex) == null) return;
-            __result = true;
-            if (ChestOrganizer.relayed++ == 0) ChestOrganizer.Log("host passou a primeira mudanca de bau fechado aos amigos");
+            if (ChestOrganizer.HostDeserialize(m, remoteID)) return true;
+            __result = false;
+            return false;
         }
-        catch (Exception e) { ChestOrganizer.LogOnce("relay falhou: " + e.Message); }
+        catch (Exception e) { ChestOrganizer.LogOnce("mensagem de bau do jogo falhou: " + e.Message); return true; }
     }
 }
 
-// Client: holding the hammer shows costs, so make sure chest contents are fresh.
-[HarmonyPatch(typeof(BuildingUI_CostBox), nameof(BuildingUI_CostBox.SetAmountInInventory), typeof(PlayerInventory), typeof(bool))]
-static class Patch_ChestOrganizer_CostSync
+// Client: chest open/close messages from the game (and from Craft From All Storage) go through the mod.
+[HarmonyPatch(typeof(Raft_Network), nameof(Raft_Network.SendP2P), typeof(Network_UserId), typeof(Message), typeof(EP2PSend), typeof(NetworkChannel))]
+static class Patch_ChestOrganizer_SendP2P
 {
-    static void Postfix() { ChestOrganizer.wantSync = true; }
+    static bool Prefix(Message message)
+    {
+        if (ChestOrganizer.I == null || Raft_Network.IsHost || message == null) return true;
+        if (message.Type != Messages.StorageManager_Open && message.Type != Messages.StorageManager_Close) return true;
+        Message_Storage m = message as Message_Storage;
+        if (m == null) return true;
+        try { return ChestOrganizer.ClientIntercept(m); }
+        catch (Exception e) { ChestOrganizer.LogOnce("envio de bau falhou: " + e.Message); return true; }
+    }
+}
+
+// Hide the chest's Sort and "put everything in" buttons; the host keeps the chests sorted.
+[HarmonyPatch(typeof(Inventory), "Update")]
+static class Patch_ChestOrganizer_HideButtons
+{
+    static void Postfix(Inventory __instance)
+    {
+        if (ChestOrganizer.I == null || __instance is PlayerInventory) return;
+        if (__instance.sortButton != null && __instance.sortButton.activeSelf) __instance.sortButton.SetActive(false);
+        if (__instance.dumpButton != null && __instance.dumpButton.activeSelf) __instance.dumpButton.SetActive(false);
+    }
 }
