@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.7.0";
+    public const string Version = "2.7.1";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -1181,9 +1181,9 @@ namespace BCUI_HC
                 LayoutElement le = air.GetComponent<LayoutElement>();
                 if (le == null) le = air.AddComponent<LayoutElement>();
                 le.ignoreLayout = true;
-                // the heart becomes a cluster of bubbles, drawn in the same white as the bar
+                // the heart becomes a cluster of bubbles, in the same dark brown as the other stat icons
                 foreach (Image im in air.GetComponentsInChildren<Image>(true))
-                    if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) { im.sprite = Bubbles(); im.color = Color.white; im.preserveAspect = true; im.enabled = true; }
+                    if (im.sprite != null && im.sprite.name.StartsWith("StatIcon_")) { im.sprite = Bubbles(); im.color = new Color32(0x43, 0x22, 0x0D, 255); im.preserveAspect = true; im.enabled = true; }
                 airSl = air.GetComponentsInChildren<Slider>(true);
                 foreach (Slider s in airSl)
                 {
@@ -1201,7 +1201,7 @@ namespace BCUI_HC
             rt.anchoredPosition += Delta(rt, par, true, x, y);
         }
 
-        // three bubbles (big, medium, small): a white rim, a faint fill and a glint top-left
+        // three bubbles (big, medium, small): a rim, a faint fill and a glint top-left left clear
         static Sprite bubbles;
         static Sprite Bubbles()
         {
@@ -1223,8 +1223,9 @@ namespace BCUI_HC
                         float rim = Mathf.Clamp01(w * 0.5f + 0.5f - Mathf.Abs(d - (r - w * 0.5f)));
                         float fill = Mathf.Clamp01(r - d + 0.5f) * 0.22f;
                         float gx = x + 0.5f - (b[i].x - r * 0.4f), gy = y + 0.5f - (b[i].y + r * 0.4f), gr = r * 0.24f;
-                        float glint = Mathf.Clamp01(gr - Mathf.Sqrt(gx * gx + gy * gy) + 0.5f) * 0.95f;
-                        a = Mathf.Max(a, Mathf.Max(rim, Mathf.Max(fill, glint)));
+                        // the glint is cut out of the fill (the icon is a dark stencil, like the game's)
+                        float glint = Mathf.Clamp01(gr - Mathf.Sqrt(gx * gx + gy * gy) + 0.5f);
+                        a = Mathf.Max(a, Mathf.Max(rim, fill * 1.6f * (1f - glint)));
                     }
                     px[y * n + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(a * 255f));
                 }
