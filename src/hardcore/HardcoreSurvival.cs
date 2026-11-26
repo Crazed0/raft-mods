@@ -24,7 +24,7 @@ using RaftModLoader;
 // hardcore teste <acordado N|temp N|doente|vomitar>
 public class HardcoreSurvival : Mod
 {
-    public const string Version = "2.8.0";
+    public const string Version = "2.8.1";
     const string HarmonyId = "com.bestcode.hardcore";
     const BindingFlags BF = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
     public static HardcoreSurvival I;
@@ -562,7 +562,13 @@ public class HardcoreSurvival : Mod
                 case UniqueWeatherType.SnowRough: target -= 0.45f; break;
             }
             if (inWater) target -= 0.65f;
-            else target -= 0.2f * wet;
+            else
+            {
+                target -= 0.2f * wet;
+                // dry on the raft or an island the body always gets out of the cold by itself, unless it snows
+                bool snow = wt == UniqueWeatherType.Snow || wt == UniqueWeatherType.SnowRough;
+                if (!snow) target = Mathf.Max(target, 0.4f);
+            }
             float rate = inWater ? 1f / 120f : 1f / 270f;
             // a fire on the raft cannot warm you while you are in the sea
             if (inWater) nearFire = false;
@@ -570,9 +576,9 @@ public class HardcoreSurvival : Mod
             if (nearFire) { target = 1f; rate = (1f / 20f) * (1f - 0.6f * wet); }
             else if (!inWater && target > temp)
             {
-                // without one the body only warms itself once dry: barely without leather clothes,
-                // slowly with them
-                rate = wet > 0.05f ? 0f : (insul >= 0.15f ? Mathf.Lerp(1f / 400f, 1f / 150f, insul / 0.8f) : 1f / 2400f);
+                // without one the body warms itself slowly once out of the water (a fire is ~10x faster),
+                // a bit quicker with leather clothes
+                rate = wet > 0.05f ? 0f : (insul >= 0.15f ? Mathf.Lerp(1f / 200f, 1f / 110f, insul / 0.8f) : 1f / 200f);
                 // out in the sun during the day the body warms up bit by bit, never as fast or as
                 // high as next to a real heat source
                 float sun = Sun(h, wt);
